@@ -27,6 +27,8 @@ pub struct CurrentResponse {
     pub pid: String,
     pub name: String,
     pub email: String,
+    pub role: String,
+    pub max_bytes: i64,
 }
 
 impl CurrentResponse {
@@ -36,6 +38,8 @@ impl CurrentResponse {
             pid: user.pid.to_string(),
             name: user.name.clone(),
             email: user.email.clone(),
+            role: user.role.clone(),
+            max_bytes: user.max_bytes,
         }
     }
 }

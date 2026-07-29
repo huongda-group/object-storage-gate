@@ -1,141 +1,150 @@
 # Data Foundation — Design Spec
 
-**Date:** 2026-07-24
-**Slice:** #1 of the Object Storage Gate build (see `FUTURE.md`).
-**Scope:** SeaORM migrations + models for `tenants`, `access_keys` (+ policy child tables), and versioned `objects` metadata, plus the AES-GCM secret-crypto helper and app wiring. No S3 API surface, no backend proxy, no SigV4, no quota method bodies, no Redis — those are later slices. This slice produces a compiling, migrated schema with model-level business logic and unit tests.
+**Date:** 2026-07-24 (revised — user-owned buckets model)
+**Slice:** #1 of the Object Storage Gate build.
+**Scope:** Data layer for the gateway under the **user-owns-buckets** model: extend the starter `users` table into the account/owner, add `buckets` (first-class, per-user, per-bucket quota), `access_keys` (+ per-key policy child tables), and `objects` metadata (no versioning), plus the AES-256-GCM secret-crypto helper and app wiring. No S3 API, proxy, SigV4 verify, quota-mutation bodies, or Redis — later slices.
 
-## Context
+## Model (supersedes FUTURE.md's single-virtual-bucket framing)
 
-The repo is an unmodified loco.rs 0.16 SaaS starter (`User` + JWT + mailers + React frontend). Only the `users` table exists. This slice lays the data layer every later slice depends on. It deliberately builds structure (columns, tables, indexes, version-chain helpers) but leaves runtime enforcement (SigV4 verify, quota reserve/commit, proxying) to slices #2–#4.
+- **A `user` is the account/tenant.** Reuse the starter `users` table + JWT auth; add a `role` column (`admin` | `user`). Admins manage the system; users own storage.
+- **Per-user total quota** on `users`: `max_bytes` where **`0` = unlimited**.
+- **Buckets are first-class.** One user owns many buckets; each bucket has its own quota (`max_bytes`, `0` = unlimited). Bucket names are unique **per user** (two users may both own `photos`); the authenticated access key resolves which user, hence which bucket.
+- **Objects belong to a bucket.** One row per `(bucket_id, object_key)` — PutObject overwrites (versioning deferred to a later slice).
+- **Quota is two-tier:** a write reserves against both the bucket and the owning user; either at limit rejects. (Reserve/commit/release bodies are slice #4; this slice only lays the columns.)
+- Physical backend mapping (slice #3): `physical-bucket/{user_pid}/{bucket_name}/{object_key}`.
 
-## Conventions (all new tables)
+## Conventions (new tables)
 
-- Internal `id` (i32, PK, auto-increment) for FKs/joins **plus** public `pid` (UUID) for paths and API — the loco `users` pattern.
-- `created_at` / `updated_at` timestamptz (loco default columns).
-- Postgres in dev/prod, SQLite in tests. Column types chosen to work on both (avoid PG-only types except where noted; enums modeled as strings for SQLite compatibility).
-- Business logic lives in sibling modules (`models/tenants.rs`, etc.), never in generated `_entities/`. Regenerate entities with `cargo loco db entities` after migrations.
+- Internal `id` (i32 PK) + public `pid` (UUID) for paths/API — the loco `users` pattern. `pid` set in `before_save` on insert.
+- `created_at`/`updated_at` auto-added by loco `create_table`.
+- Postgres (dev/prod) + SQLite (tests). Status/role/action fields are `String` (validated in Rust), not native enums.
+- **Unlimited sentinel is `0`, not NULL.** Quota columns are `BigInteger` NOT NULL default `0`.
+- Business logic in `src/models/<name>.rs`; never hand-edit `_entities/`.
 
 ## Secret crypto (`src/models/crypto.rs`)
 
-- Algorithm: AES-256-GCM.
-- Master key sourced from config via `get_env` (`config/*.yaml`), 32 bytes (base64 or hex in env). Fail fast at startup if missing/wrong length.
-- Stored form in `bytea`: `nonce (12 bytes) || ciphertext || tag`. Random nonce per encryption.
-- Two functions: `encrypt(plaintext: &str) -> Vec<u8>` and `decrypt(bytes: &[u8]) -> Result<String>`.
-- Rationale: SigV4 recomputes HMAC from the secret at verify time, so the secret must be recoverable — password-style hashing is impossible. Encryption-at-rest means a DB dump alone leaks no usable secrets.
+AES-256-GCM. Master key from `OSG_MASTER_KEY` env (base64, 32 bytes) via `OnceLock`, with a documented dev/test fallback. Stored form: `nonce(12) || ciphertext || tag` in a `Blob` column. `encrypt(&str) -> Vec<u8>`, `decrypt(&[u8]) -> Result<String>`. Rationale: SigV4 recomputes HMAC from the plaintext secret at verify time — password hashing is impossible, so encrypt-at-rest.
 
-## Table: `tenants`
+## `users` (ALTER existing)
 
+Add columns:
 | column | type | notes |
 |---|---|---|
-| id | i32 PK | internal |
-| pid | uuid unique | public id; used in physical prefix `tenants/{pid}/…` |
-| name | string | display name |
-| status | string | `active` \| `suspended` |
-| versioning_enabled | bool, default false | S3 per-namespace versioning toggle |
-| max_bytes | bigint null | quota limit; null = unlimited |
-| max_objects | bigint null | quota limit; null = unlimited |
-| max_multipart | bigint null | max open multipart uploads; null = unlimited |
-| used_bytes | bigint, default 0 | live usage (mutated by slice #4 reserve/commit/release under row lock) |
+| role | string, default `user` | `admin` \| `user` |
+| max_bytes | bigint, default 0 | total account quota; `0` = unlimited |
+| used_bytes | bigint, default 0 | live usage across all the user's buckets |
 | reserved_bytes | bigint, default 0 | in-flight reservations |
-| object_count | bigint, default 0 | live count of stored versions |
-| created_at / updated_at | timestamptz | |
 
-Quota columns live on `tenants` (not a separate 1:1 table) per decision. Contention on the hot usage columns is accepted for now; Redis distributed locks (slice #4) mitigate it. This slice only adds the columns — no mutation logic yet.
+Model (`src/models/users.rs`, extend): `ROLE_ADMIN`/`ROLE_USER` consts, `is_admin()`, `is_unlimited()` (`max_bytes == 0`).
 
-## Table: `access_keys`
+## `buckets`
 
 | column | type | notes |
 |---|---|---|
-| id | i32 PK | internal |
-| pid | uuid unique | public id |
-| tenant_id | i32 FK → tenants.id | on delete cascade |
-| access_key_id | string unique | the public S3 identity clients send (AKIA-style) |
-| secret_encrypted | bytea | AES-GCM(secret) via crypto helper |
-| label | string | Secret Management: `primary` \| `backup` \| `temporary` \| `ci` \| `readonly` (free string, not enforced enum) |
-| status | string | `active` \| `disabled` \| `revoked` |
-| expires_at | timestamptz null | for temporary keys; null = no expiry |
-| created_at / updated_at | timestamptz | |
+| id / pid | i32 / uuid | |
+| user_id | i32 FK → users | ON DELETE CASCADE |
+| name | string | S3 bucket name the client uses |
+| max_bytes | bigint, default 0 | per-bucket quota; `0` = unlimited |
+| used_bytes / reserved_bytes / object_count | bigint, default 0 | live usage (mutated in slice #4) |
 
-Index: `access_key_id` unique. FK index on `tenant_id`.
+Unique index `(user_id, name)`. Model: `create`, `find_by_user_and_name`, `is_unlimited()`.
 
-### Policy child tables (normalized)
-
-**`access_key_permissions`**
-| column | type | notes |
-|---|---|---|
-| id | i32 PK | |
-| access_key_id | i32 FK → access_keys.id | on delete cascade |
-| action | string | `read` \| `write` \| `delete` \| `list` \| `multipart` \| `presigned` |
-
-Presence of a row = action granted. Unique `(access_key_id, action)`.
-
-**`access_key_prefixes`**
-| column | type | notes |
-|---|---|---|
-| id | i32 PK | |
-| access_key_id | i32 FK → access_keys.id | on delete cascade |
-| prefix | string | e.g. `images/*`, `documents/*`. Empty set for a key = full tenant namespace |
-
-Both are read together on every auth check (slice #2); callers cache the loaded policy per request rather than re-querying.
-
-## Table: `objects` (versioned)
+## `access_keys`
 
 | column | type | notes |
 |---|---|---|
-| id | i32 PK | internal |
-| pid | uuid unique | public id |
-| tenant_id | i32 FK → tenants.id | on delete cascade |
-| object_key | string | logical key the client sees (unrewritten) |
-| version_id | uuid | S3 versionId; a fixed sentinel value marks the `null`-version row used when versioning is off |
-| is_latest | bool | exactly one latest per (tenant, key) |
-| is_delete_marker | bool | delete-without-versionId inserts one |
-| size | bigint | bytes; 0 for delete markers |
-| etag | string | S3 ETag |
-| content_type | string | |
-| created_at / updated_at | timestamptz | |
+| id / pid | i32 / uuid | |
+| user_id | i32 FK → users | ON DELETE CASCADE |
+| access_key_id | string unique | public S3 identity clients send |
+| secret_encrypted | blob | AES-GCM(secret) |
+| label | string, default `primary` | primary/backup/temporary/ci/readonly |
+| status | string, default `active` | active/disabled/revoked |
+| expires_at | timestamptz null | temporary keys |
 
-Indexes:
-- Partial unique: `(tenant_id, object_key) WHERE is_latest = true` — guarantees one current version per key. (Postgres partial index; on SQLite tests, emulate with a partial index or a plain unique on a computed latest key — migration handles both, tests run SQLite.)
-- `(tenant_id, object_key, created_at)` — version-chain listing + ListObjectsV2 prefix scans.
+Model: `create_key(db, user_id, label) -> (Model, plaintext_secret)`, `find_by_access_key_id`, `decrypt_secret`, `is_usable`, `permissions(db)`, `prefixes(db)`.
 
-### Versioning behavior (encoded in `models/objects.rs`, consumed by later slices)
+### Per-key policy (kept, normalized)
 
-- **GET** (no versionId): return latest where `is_latest AND NOT is_delete_marker`; if the latest is a delete marker → 404.
-- **PUT**: insert a new version row, set prior latest `is_latest=false`. If tenant `versioning_enabled=false`: overwrite the single sentinel `null`-version row instead of chaining.
-- **DELETE** (no versionId): insert a delete-marker version, becomes latest.
-- **DELETE** (with versionId): hard-remove that specific version row.
-- **Quota accounting** (defined here, mutated in #4): every stored version consumes its `size` in `used_bytes`; delete markers count 0; `object_count` counts stored version rows.
+- **`access_key_permissions`** — `(access_key_id FK, action)`; action ∈ read/write/delete/list/multipart/presigned. Presence = granted. Unique `(access_key_id, action)`.
+- **`access_key_prefixes`** — `(access_key_id FK, prefix)`, e.g. `images/*`. Empty set = full access to the user's buckets.
 
-These transitions ship as pure model helpers with unit tests now; the HTTP verbs that call them arrive in slices #3/#5.
+## `objects` (no versioning)
+
+| column | type | notes |
+|---|---|---|
+| id / pid | i32 / uuid | |
+| bucket_id | i32 FK → buckets | ON DELETE CASCADE |
+| object_key | string | logical key within the bucket |
+| size | bigint, default 0 | |
+| etag | string | |
+| content_type | string, default `application/octet-stream` | |
+
+Unique index `(bucket_id, object_key)` — one row per key, PutObject overwrites. Index `(bucket_id, object_key)` also serves ListObjectsV2 prefix scans (covered by the unique index). Model: `put_object` (upsert), `get`, `delete`, `list_by_prefix`.
 
 ## App wiring (`src/app.rs`)
 
-- Register each migration in `migration/src/lib.rs` (above the `inject-above` marker).
-- `truncate()`: add each new table.
-- `seed()`: seed one demo tenant + one active access key (with a known secret, encrypted) + a read/write/list permission set — used by tests and `db reset`.
-
-## Models / files delivered
-
-- `src/models/crypto.rs` — AES-GCM encrypt/decrypt.
-- `src/models/tenants.rs` — create, lookup by pid, status helpers.
-- `src/models/access_keys.rs` — `create_key` (generates access_key_id + secret, encrypts), `find_by_access_key_id`, `decrypt_secret`, status/expiry checks, policy loaders (`permissions()`, `prefixes()`).
-- `src/models/objects.rs` — version-chain helpers: `put_version`, `latest`, `insert_delete_marker`, `remove_version`, list-by-prefix.
-- `src/models/access_key_permissions.rs`, `src/models/access_key_prefixes.rs` — thin, mostly generated.
-- Migrations: `m2026…_tenants.rs`, `_access_keys.rs`, `_access_key_permissions.rs`, `_access_key_prefixes.rs`, `_objects.rs`.
+- `truncate()`: add objects → access_key_permissions/prefixes → access_keys → buckets → users (FK order).
+- `seed()`: existing users seed keeps working; add a demo bucket fixture owned by a seeded user (optional, for tests).
 
 ## Testing
 
-- `models/crypto.rs`: encrypt→decrypt round-trip; tampered ciphertext fails; wrong key fails.
-- `access_keys`: create generates unique id + recoverable secret; expired/disabled/revoked status checks.
-- `objects`: PUT chains versions and flips `is_latest`; versioning-off overwrites sentinel; delete marker hides latest from GET; DELETE-with-versionId removes only that row; partial-unique enforces single latest.
-- Use `serial_test` for anything touching shared seed/DB state; `insta` snapshots only where output shape is asserted.
-- No S3 client / backend tests in this slice.
+- crypto: round-trip, random nonce, tamper fails, too-short fails.
+- users: role/quota defaults, `is_admin`, `is_unlimited`.
+- buckets: create, per-user name uniqueness (same name different user OK; duplicate for same user fails), `is_unlimited`.
+- access_keys: create generates recoverable secret; status/expiry `is_usable`; policy children load.
+- objects: put inserts; put again overwrites same row (unique key); get/delete; list_by_prefix filters by prefix within bucket.
+- `serial_test` for shared DB state; SQLite backend.
 
-## Explicitly out of scope (later slices)
+## Out of scope (later slices)
 
-- SigV4 verification + tenant resolution middleware (#2).
-- Prefix rewrite + backend-store proxy + S3 verbs (#3).
-- Quota reserve/commit/release bodies, reconcile task, Redis locks (#4).
-- ListObjectsV2 / Copy / multipart tables + logic (#5).
-- Audit log table + background jobs (#6).
-- Admin API + React UI (#7).
+SigV4 verify + user/bucket resolution (#2); prefix rewrite + backend proxy + S3 verbs (#3); quota reserve/commit/release + reconcile + Redis locks (#4); object versioning, Copy, multipart (#5); audit log + background jobs (#6); admin API + React UI (#7).
+
+---
+
+## Addendum, 2026-07-29 — what the console UI needs on top of slice #1
+
+Comparing `frontend/` (the ported console) against the shipped schema left one
+screen unsupported and one status underspecified. Both are covered now.
+
+### `buckets` — owner is nullable, and carries backend-store config
+
+The admin Pool screen (`console-object-storage-gate/project/Admin Buckets.dc.html`)
+lists gateway-wide pools with no owner, and edits which object store each bucket
+proxies to. Slice #1 had neither.
+
+- `user_id` became a **nullable** reference (`create_table(..., &[("users?", "")])`).
+  `NULL` = system pool: gateway-wide, outside every user's quota
+  (`Model::create_system`, `is_system()`, `find_system_by_name`).
+  FK is `ON DELETE SET NULL`, so the delete-user API (#7) must drop the user's
+  buckets first or they silently become system pools.
+- Name uniqueness moved to `UNIQUE (COALESCE(user_id, 0), name)`
+  (`idx_buckets_owner_name`). A plain `(user_id, name)` index would let two system
+  pools share a name, because NULLs compare distinct. Side effect: sea-orm-codegen
+  can only resolve the one real column in that index and stamps
+  `#[sea_orm(unique)]` on `name` — metadata only, the DB constraint is correct.
+- New columns (`m20260724_000007_bucket_backend_store`): `provider` (default
+  `internal`, validated against `buckets::PROVIDERS`), `region`, `api_endpoint`,
+  `access_id`, `access_secret_encrypted` (AES-GCM, same envelope as
+  `access_keys.secret_encrypted`), `public_enabled` (default false).
+  `Model::set_store` / `decrypt_store_secret` own the encryption; passing
+  `access_secret: None` keeps the stored one so editing a pool doesn't wipe it.
+
+### `access_keys` — `expired` is derived, never stored
+
+The console shows four status pills; the DB stores three
+(`active`/`disabled`/`revoked`). Expiry is a function of `expires_at`, so the
+backend derives it and the UI never recomputes: `is_expired()`,
+`effective_status()` (a revoked key stays revoked after lapsing), and
+`days_until_expiry()` for the "Còn 3 ngày" column.
+
+### Still not in the DB, on purpose
+
+- **Physical capacity** behind "trên 4 TiB vật lý" / "oversubscribe 127%" is
+  deployment config, not a row. It belongs in `config/*.yaml` and the
+  `/api/admin/summary` response (#7).
+- **Per-user counters** the admin table shows (bucket count, `4/5` keys) are
+  `COUNT` queries the summary endpoints compute (#7); nothing is denormalised.
+- **Route identifiers**: the console currently routes by `name` / `access_key_id`
+  / `email`. `pid` exists on every table and the API contract (`docs/ui/admin-ui-spec.md` §7)
+  uses it; the Pool screen in particular must switch, since bucket names are only
+  unique per owner.

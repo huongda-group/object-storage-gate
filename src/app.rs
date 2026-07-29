@@ -14,7 +14,14 @@ use migration::Migrator;
 use std::path::Path;
 
 #[allow(unused_imports)]
-use crate::{controllers, models::_entities::users, tasks, workers::downloader::DownloadWorker};
+use crate::{
+    controllers,
+    models::_entities::{
+        access_key_permissions, access_key_prefixes, access_keys, buckets, objects, users,
+    },
+    tasks,
+    workers::downloader::DownloadWorker,
+};
 
 pub struct App;
 #[async_trait]
@@ -59,6 +66,11 @@ impl Hooks for App {
         // tasks-inject (do not remove)
     }
     async fn truncate(ctx: &AppContext) -> Result<()> {
+        truncate_table(&ctx.db, objects::Entity).await?;
+        truncate_table(&ctx.db, access_key_permissions::Entity).await?;
+        truncate_table(&ctx.db, access_key_prefixes::Entity).await?;
+        truncate_table(&ctx.db, access_keys::Entity).await?;
+        truncate_table(&ctx.db, buckets::Entity).await?;
         truncate_table(&ctx.db, users::Entity).await?;
         Ok(())
     }

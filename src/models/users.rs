@@ -10,6 +10,22 @@ pub use super::_entities::users::{self, ActiveModel, Entity, Model};
 pub const MAGIC_LINK_LENGTH: i8 = 32;
 pub const MAGIC_LINK_EXPIRATION_MIN: i8 = 5;
 
+pub const ROLE_ADMIN: &str = "admin";
+pub const ROLE_USER: &str = "user";
+
+impl Model {
+    #[must_use]
+    pub fn is_admin(&self) -> bool {
+        self.role == ROLE_ADMIN
+    }
+
+    /// Account-wide quota unlimited when `max_bytes == 0`.
+    #[must_use]
+    pub fn is_unlimited(&self) -> bool {
+        self.max_bytes == 0
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct LoginParams {
     pub email: String,

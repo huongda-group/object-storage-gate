@@ -1,2 +1,8 @@
 pub mod _entities;
+pub mod access_key_permissions;
+pub mod access_key_prefixes;
+pub mod access_keys;
+pub mod buckets;
+pub mod crypto;
+pub mod objects;
 pub mod users;

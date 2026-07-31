@@ -8,13 +8,20 @@ use loco_rs::{
     db::{self, truncate_table},
     environment::Environment,
     task::Tasks,
-    Result,
+    Error, Result,
 };
 use migration::Migrator;
 use std::path::Path;
 
 #[allow(unused_imports)]
-use crate::{controllers, models::_entities::users, tasks, workers::downloader::DownloadWorker};
+use crate::{
+    controllers,
+    models::_entities::{
+        access_key_permissions, access_key_prefixes, access_keys, buckets, objects, users,
+    },
+    tasks,
+    workers::downloader::DownloadWorker,
+};
 
 pub struct App;
 #[async_trait]
@@ -41,6 +48,20 @@ impl Hooks for App {
         create_app::<Self, Migrator>(mode, environment, config).await
     }
 
+    // Refuse to start production with the checked-in dev master key: every
+    // access-key secret and backend-store credential would otherwise be
+    // encrypted at rest with a publicly known key. See `models::crypto`.
+    // This hook (not `boot`) is the guard point because the loco CLI calls
+    // `create_app` directly and never goes through `Hooks::boot`.
+    async fn after_context(ctx: AppContext) -> Result<AppContext> {
+        if ctx.environment == Environment::Production && std::env::var("OSG_MASTER_KEY").is_err() {
+            return Err(Error::string(
+                "OSG_MASTER_KEY must be set in production (base64-encoded 32-byte key)",
+            ));
+        }
+        Ok(ctx)
+    }
+
     async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
         Ok(vec![])
     }
@@ -48,6 +69,7 @@ impl Hooks for App {
     fn routes(_ctx: &AppContext) -> AppRoutes {
         AppRoutes::with_default_routes() // controller routes below
             .add_route(controllers::auth::routes())
+            .add_route(controllers::api::routes())
     }
     async fn connect_workers(ctx: &AppContext, queue: &Queue) -> Result<()> {
         queue.register(DownloadWorker::build(ctx)).await?;
@@ -59,6 +81,11 @@ impl Hooks for App {
         // tasks-inject (do not remove)
     }
     async fn truncate(ctx: &AppContext) -> Result<()> {
+        truncate_table(&ctx.db, objects::Entity).await?;
+        truncate_table(&ctx.db, access_key_permissions::Entity).await?;
+        truncate_table(&ctx.db, access_key_prefixes::Entity).await?;
+        truncate_table(&ctx.db, access_keys::Entity).await?;
+        truncate_table(&ctx.db, buckets::Entity).await?;
         truncate_table(&ctx.db, users::Entity).await?;
         Ok(())
     }

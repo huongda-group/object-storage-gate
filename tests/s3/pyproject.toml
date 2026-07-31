@@ -1,0 +1,18 @@
+[project]
+name = "osg-s3-conformance"
+version = "0.1.0"
+description = "Black-box S3 API conformance suite — runs against a real S3 endpoint or against the gateway"
+requires-python = ">=3.11"
+dependencies = [
+  "boto3>=1.35",
+  "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+addopts = "-ra --strict-markers"
+markers = [
+  "gateway_only: only meaningful against Object Storage Gate (skipped when OSG_S3_TARGET=upstream)",
+  "upstream_only: only meaningful against a real object store (skipped when OSG_S3_TARGET=gateway)",
+  "slow: uploads megabytes or sleeps; multipart and presigned-expiry cases",
+]

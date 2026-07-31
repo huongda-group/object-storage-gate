@@ -66,6 +66,10 @@ Layout:
 - **S3 wire compatibility is the product.** XML bodies, ETags, headers, error codes must match what AWS SDK / boto3 / rclone / aws-cli expect. Test against real S3 clients, not only unit asserts.
 - **SigV4 auth is per-access-key**, distinct from the starter's JWT user auth. A tenant holds many keys (primary/backup/temp/CI/read-only) with independent rotate/disable/expire/revoke. Don't conflate the two auth systems.
 
+## Workflow
+
+- **Never commit or push unless explicitly asked.** No auto-commit, even when a skill/workflow suggests it. Leave changes staged/unstaged; the user commits.
+
 ## Testing conventions
 
 `insta` snapshot tests (`.snap` files under `tests/*/snapshots/`) — review with `cargo insta review` after intended output changes. `serial_test` for anything touching shared DB/quota state. `rstest` for parametrized cases. Request tests boot a full app instance.

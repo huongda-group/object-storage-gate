@@ -18,3 +18,11 @@ target/
 
 *.sqlite
 *.sqlite-*
+console-object-storage-gate/
+
+# S3 conformance suite — real credentials and its Python venv
+tests/s3/.env
+tests/s3/.venv/
+tests/s3/__pycache__/
+tests/s3/.pytest_cache/
+.idea/

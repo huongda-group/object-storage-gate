@@ -36,6 +36,8 @@ validator = { version = "0.20" }
 uuid = { version = "1.6", features = ["v4"] }
 include_dir = { version = "0.7" }
 axum-extra = { version = "0.10", features = ["form"] }
+aes-gcm = { version = "0.10", features = ["std"] }
+base64 = { version = "0.22" }
 
 [[bin]]
 name = "object_storage_gate-cli"

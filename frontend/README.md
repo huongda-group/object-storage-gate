@@ -1,42 +1,50 @@
-# SaaS Frontend
+# Object Storage Gate — console
 
-## Batteries included
+React SPA for the gateway console. Built with:
 
-- [TypeScript](https://www.typescriptlang.org/): A typed superset of JavaScript
-- [Rsbuild](https://rsbuild.dev/): A Rust-based web build tool
-- [Biome](https://biomejs.dev/): A Rust-based formatter and sensible linter for the web
-- [React](https://reactjs.org/): A JavaScript library for building user interfaces
+- [TanStack Router](https://tanstack.com/router) — file-based routes under `src/routes/`
+- [Rsbuild](https://rsbuild.dev/) (rspack) — bundler; the router's rspack plugin generates `src/routeTree.gen.ts` on every build/dev run
+- [React 19](https://react.dev/) + TypeScript
+- [Biome](https://biomejs.dev/) — lint + format, [Vitest](https://vitest.dev/) — unit tests for `src/lib/`
 
-If you don't like React for some reason, Rsbuild makes it easy to replace it with something else!
-
-# Development
-
-To get started with the development of the SaaS frontend, follow these steps:
-
-### 1. Install Packages
-
-Use the following command to install the required packages using pnpm:
+## Commands
 
 ```sh
 pnpm install
+pnpm dev        # dev server on :3000, proxies /api → http://localhost:5150
+pnpm build      # → dist/, served statically by `cargo loco start`
+pnpm test       # vitest (src/lib/*.test.ts)
+pnpm lint       # biome check src/
+pnpm exec tsc --noEmit   # run `pnpm build` first: it regenerates routeTree.gen.ts
 ```
 
-### 2. Run in Development Mode
+`pnpm dev --port 3100` if something else already holds :3000.
 
-Once the packages are installed, run your frontend application in development mode with the following command:
+## Where the design comes from
 
-```sh
-pnpm dev
-```
+Every screen is a port of a Claude Design prototype in `../console-object-storage-gate/project/*.dc.html`;
+each route file names its source in the first comment. Behaviour, copy and data
+shapes follow `../docs/ui/admin-ui-spec.md`. Inline styles are copied verbatim from
+the prototypes — only `:hover` / `:focus` / `@media` live in `src/styles.css`,
+because inline styles cannot express them.
 
-This will start the development frontend server serving via vit
+## Routes
 
-### 3. Build The application
+| Route | Screen |
+|---|---|
+| `/login` `/register` `/forgot` `/reset?token=` `/verify/$token` `/magic-link` | auth (real API) |
+| `/` | dashboard |
+| `/buckets` `/buckets/$name` `/buckets/$name/settings` | buckets, object browser, quota + delete |
+| `/keys` `/keys/$pid` | access keys, permissions + prefixes |
+| `/settings` `/profile` | profile, password, account stats |
+| `/admin` `/admin/users` `/admin/users/$pid` `/admin/buckets` | admin only (`users.role = 'admin'`) |
 
-To build your application run the following command:
+## Data
 
-```sh
-pnpm build
-```
+Auth talks to the real loco endpoints (`/api/auth/*`). Everything else reads
+fixtures from `src/lib/mock.ts` — the buckets/keys/objects/admin API is slice #7.
+Mutations update local state and raise the same toast the prototype does; each
+call site carries a `TODO(slice#7)` naming the endpoint it is waiting on.
 
-After the build `dist` folder is ready to served by loco. run loco `cargo loco start` and the frontend application will served via Loco
+Route guards (`src/routes/_app.tsx`, and the admin `beforeLoad` checks) are UX
+only. The server must enforce both.

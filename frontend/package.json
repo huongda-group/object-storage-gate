@@ -7,18 +7,23 @@
     "dev": "rsbuild dev --open",
     "build": "rsbuild build",
     "lint": "biome check src/",
+    "test": "vitest run",
     "preview": "rsbuild preview"
   },
   "dependencies": {
-    "react": "^18",
-    "react-dom": "^18"
+    "@tanstack/react-router": "^1.170.18",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@biomejs/biome": "^1",
     "@rsbuild/core": "^1",
     "@rsbuild/plugin-react": "^1",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "typescript": "^5"
+    "@tanstack/router-plugin": "^1.168.23",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "jsdom": "^30.0.0",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

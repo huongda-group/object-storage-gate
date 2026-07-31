@@ -9,7 +9,10 @@ use std::sync::OnceLock;
 pub const NONCE_LEN: usize = 12;
 
 // ponytail: dev/test fallback key. Production MUST set OSG_MASTER_KEY to a
-// base64-encoded 32-byte key. Upgrade path: KMS-backed key if rotation needed.
+// base64-encoded 32-byte key — enforced in `app::App::after_context`, which
+// refuses to start a production app without it, so this fallback can only be
+// reached in development and test.
+// Upgrade path: KMS-backed key if rotation needed.
 const DEV_KEY_B64: &str = "ZGV2LW9ubHktMzJieXRlLW1hc3Rlci1rZXktMDEyMzQ=";
 
 fn master_key() -> &'static Key<Aes256Gcm> {

@@ -8,7 +8,7 @@ use loco_rs::{
     db::{self, truncate_table},
     environment::Environment,
     task::Tasks,
-    Result,
+    Error, Result,
 };
 use migration::Migrator;
 use std::path::Path;
@@ -46,6 +46,20 @@ impl Hooks for App {
         config: Config,
     ) -> Result<BootResult> {
         create_app::<Self, Migrator>(mode, environment, config).await
+    }
+
+    // Refuse to start production with the checked-in dev master key: every
+    // access-key secret and backend-store credential would otherwise be
+    // encrypted at rest with a publicly known key. See `models::crypto`.
+    // This hook (not `boot`) is the guard point because the loco CLI calls
+    // `create_app` directly and never goes through `Hooks::boot`.
+    async fn after_context(ctx: AppContext) -> Result<AppContext> {
+        if ctx.environment == Environment::Production && std::env::var("OSG_MASTER_KEY").is_err() {
+            return Err(Error::string(
+                "OSG_MASTER_KEY must be set in production (base64-encoded 32-byte key)",
+            ));
+        }
+        Ok(ctx)
     }
 
     async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {

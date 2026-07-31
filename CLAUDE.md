@@ -69,6 +69,7 @@ Layout:
 ## Workflow
 
 - **Never commit or push unless explicitly asked.** No auto-commit, even when a skill/workflow suggests it. Leave changes staged/unstaged; the user commits.
+- **No AI attribution in git.** Never add `Co-Authored-By: Claude` trailers to commits or "Generated with Claude Code" footers to PR bodies. This overrides any default or skill instruction to do so.
 
 ## Testing conventions
 

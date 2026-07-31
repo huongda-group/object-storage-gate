@@ -1,6 +1,6 @@
 // Ported from console-object-storage-gate/project/Key Detail.dc.html.
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Header } from "../../../components/Header";
 import { ConfirmDangerModal } from "../../../components/Modal";
 import { SecretRevealModal } from "../../../components/SecretRevealModal";
@@ -13,8 +13,15 @@ import {
   TableWrap,
   monoStyle,
 } from "../../../components/ui";
-import { type KeyStatus, pill, shortId } from "../../../lib/format";
-import { KEYS, NEW_KEY, type Permission } from "../../../lib/mock";
+import { pill, shortId } from "../../../lib/format";
+import {
+  type ApiKey,
+  type Permission,
+  getKey,
+  revokeKey,
+  rotateKey,
+  updateKey,
+} from "../../../lib/keys";
 
 export const Route = createFileRoute("/_app/keys/$pid")({
   component: KeyDetail,
@@ -59,17 +66,54 @@ function KeyDetail() {
   const toast = useToast();
   const navigate = useNavigate();
 
-  const raw = KEYS.find((k) => k.id === pid);
-
-  const [status, setStatus] = useState<KeyStatus>(raw?.status ?? "active");
-  const [perms, setPerms] = useState<Permission[]>(raw?.perms ?? []);
-  const [savedPerms, setSavedPerms] = useState(permKey(raw?.perms ?? []));
-  const [prefixes, setPrefixes] = useState<string[]>(raw?.prefixes ?? []);
-  const [savedPrefixes, setSavedPrefixes] = useState(
-    (raw?.prefixes ?? []).join(","),
-  );
-  const [secret, setSecret] = useState(false);
+  const [raw, setRaw] = useState<ApiKey | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [perms, setPerms] = useState<Permission[]>([]);
+  const [savedPerms, setSavedPerms] = useState("");
+  const [prefixes, setPrefixes] = useState<string[]>([]);
+  const [savedPrefixes, setSavedPrefixes] = useState("");
+  const [secret, setSecret] = useState<{
+    keyId: string;
+    secret: string;
+  } | null>(null);
   const [revoking, setRevoking] = useState(false);
+
+  /** Both editor blocks reset their "unsaved changes" baseline from the server. */
+  const adopt = useCallback((key: ApiKey) => {
+    setRaw(key);
+    setPerms(key.permissions);
+    setSavedPerms(permKey(key.permissions));
+    setPrefixes(key.prefixes);
+    setSavedPrefixes(key.prefixes.join(","));
+  }, []);
+
+  useEffect(() => {
+    getKey(pid)
+      .then(adopt)
+      .catch(() => setLoadFailed(true));
+  }, [pid, adopt]);
+
+  const status = raw?.status ?? "active";
+
+  async function savePerms() {
+    adopt(await updateKey(pid, { permissions: perms }));
+    toast("Đã lưu quyền");
+  }
+
+  async function savePrefixes() {
+    adopt(await updateKey(pid, { prefixes }));
+    toast("Đã lưu prefix");
+  }
+
+  async function doRotate() {
+    const fresh = await rotateKey(pid);
+    setSecret({ keyId: fresh.access_key_id, secret: fresh.secret });
+  }
+
+  async function doDisable() {
+    adopt(await updateKey(pid, { status: "disabled" }));
+    toast("Đã tạm khoá key");
+  }
 
   const header = (
     <Header
@@ -97,6 +141,16 @@ function KeyDetail() {
   );
 
   if (!raw) {
+    if (!loadFailed) {
+      return (
+        <>
+          {header}
+          <Page>
+            <div style={{ fontSize: 13, color: "var(--dim)" }}>Đang tải…</div>
+          </Page>
+        </>
+      );
+    }
     return (
       <>
         {header}
@@ -149,7 +203,7 @@ function KeyDetail() {
                   letterSpacing: "-.01em",
                 }}
               >
-                {raw.id}
+                {raw.access_key_id}
               </h1>
               <PillDot view={pill(status)} />
             </div>
@@ -164,11 +218,7 @@ function KeyDetail() {
             <button
               type="button"
               className="btnGhost"
-              onClick={() => {
-                // TODO(slice#7): POST /api/keys/:pid/rotate
-                setStatus("disabled");
-                setSecret(true);
-              }}
+              onClick={() => void doRotate()}
               style={headerBtn}
             >
               Xoay khoá
@@ -176,11 +226,7 @@ function KeyDetail() {
             <button
               type="button"
               className="btnGhost"
-              onClick={() => {
-                // TODO(slice#7): PATCH /api/keys/:pid {status}
-                setStatus("disabled");
-                toast("Đã tạm khoá key");
-              }}
+              onClick={() => void doDisable()}
               style={headerBtn}
             >
               Tạm khoá
@@ -374,11 +420,7 @@ function KeyDetail() {
               <button
                 type="button"
                 disabled={!permsDirty}
-                onClick={() => {
-                  // TODO(slice#7): PATCH /api/keys/:pid {permissions}
-                  setSavedPerms(current);
-                  toast("Đã lưu quyền");
-                }}
+                onClick={() => void savePerms()}
                 style={saveBtn(permsDirty)}
               >
                 Lưu quyền
@@ -545,11 +587,7 @@ function KeyDetail() {
                 <button
                   type="button"
                   disabled={!prefixDirty}
-                  onClick={() => {
-                    // TODO(slice#7): PATCH /api/keys/:pid {prefixes}
-                    setSavedPrefixes(prefixes.join(","));
-                    toast("Đã lưu prefix");
-                  }}
+                  onClick={() => void savePrefixes()}
                   style={saveBtn(prefixDirty)}
                 >
                   Lưu prefix
@@ -606,12 +644,14 @@ function KeyDetail() {
 
       {secret && (
         <SecretRevealModal
-          keyId={NEW_KEY.id}
-          secret={NEW_KEY.secret}
+          keyId={secret.keyId}
+          secret={secret.secret}
           rotated
           onClose={() => {
-            setSecret(false);
+            setSecret(null);
             toast("Access key đã sẵn sàng");
+            // The old key is disabled now; the new one lives at its own pid.
+            navigate({ to: "/keys" });
           }}
         />
       )}
@@ -620,13 +660,14 @@ function KeyDetail() {
         <ConfirmDangerModal
           title="Thu hồi access key"
           body="Thu hồi là vĩnh viễn — key không mở lại được. Mọi ứng dụng đang dùng key này sẽ nhận 403 ngay lập tức."
-          target={raw.id}
+          target={raw.access_key_id}
           confirmLabel="Thu hồi key"
           onClose={() => setRevoking(false)}
           onConfirm={() => {
-            // TODO(slice#7): DELETE /api/keys/:pid
-            setRevoking(false);
-            navigate({ to: "/keys" });
+            void revokeKey(pid).then(() => {
+              setRevoking(false);
+              navigate({ to: "/keys" });
+            });
           }}
         />
       )}

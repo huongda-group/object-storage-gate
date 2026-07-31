@@ -3,7 +3,7 @@
 // form here follows docs/ui/admin-ui-spec.md §6.5 (label, preset, prefix, expiry)
 // using the same form-modal chrome as the other screens.
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "../../../components/Header";
 import {
   ConfirmDangerModal,
@@ -32,13 +32,17 @@ import {
   monoStyle,
   useRowMenu,
 } from "../../../components/ui";
-import { type KeyStatus, pill, shortId } from "../../../lib/format";
+import { pill, shortId } from "../../../lib/format";
 import {
-  type AccessKey,
-  KEYS,
-  NEW_KEY,
+  type ApiKey,
   type Permission,
-} from "../../../lib/mock";
+  createKey as apiCreateKey,
+  expiryLabel,
+  listKeys,
+  revokeKey,
+  rotateKey,
+  updateKey,
+} from "../../../lib/keys";
 
 export const Route = createFileRoute("/_app/keys/")({ component: AccessKeys });
 
@@ -80,14 +84,49 @@ function AccessKeys() {
   const toast = useToast();
   const menu = useRowMenu();
 
-  const [keys, setKeys] = useState<AccessKey[]>(KEYS);
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState<NewKeyForm | null>(null);
-  const [secret, setSecret] = useState<{ rotated: boolean } | null>(null);
-  const [revoking, setRevoking] = useState<string | null>(null);
+  const [secret, setSecret] = useState<{
+    rotated: boolean;
+    keyId: string;
+    secret: string;
+  } | null>(null);
+  const [revoking, setRevoking] = useState<ApiKey | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  function setStatus(id: string, status: KeyStatus) {
-    setKeys(keys.map((k) => (k.id === id ? { ...k, status } : k)));
+  useEffect(() => {
+    listKeys()
+      .then(setKeys)
+      .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  async function reload() {
+    setKeys(await listKeys());
+  }
+
+  async function toggleStatus(k: ApiKey) {
+    const next = k.status === "disabled" ? "active" : "disabled";
+    await updateKey(k.pid, { status: next });
+    await reload();
+    toast(next === "active" ? "Đã mở lại key" : "Đã tạm khoá key");
+  }
+
+  async function doRotate(k: ApiKey) {
+    const fresh = await rotateKey(k.pid);
+    await reload();
+    setSecret({
+      rotated: true,
+      keyId: fresh.access_key_id,
+      secret: fresh.secret,
+    });
+  }
+
+  async function doRevoke(pid: string) {
+    await revokeKey(pid);
+    await reload();
+    setRevoking(null);
+    toast("Đã thu hồi key", "danger");
   }
 
   async function copyId(id: string) {
@@ -101,26 +140,26 @@ function AccessKeys() {
     setTimeout(() => setCopied(null), 2600);
   }
 
-  function createKey() {
+  async function createKey() {
     if (!form) return;
     const perms =
       PRESETS.find((p) => p.name === form.preset)?.perms ??
       (["read", "list"] as Permission[]);
-    // TODO(slice#7): POST /api/keys {label, permissions, prefixes, expires_at}
-    setKeys([
-      ...keys,
-      {
-        id: NEW_KEY.id,
-        label: form.label,
-        status: "active",
-        created: "vừa xong",
-        exp: form.expiryDays ? `Còn ${form.expiryDays} ngày` : null,
-        perms,
-        prefixes: form.prefix.trim() ? [form.prefix.trim()] : [],
-      },
-    ]);
+    const fresh = await apiCreateKey({
+      label: form.label,
+      permissions: perms,
+      prefixes: form.prefix.trim() ? [form.prefix.trim()] : [],
+      expires_at: form.expiryDays
+        ? new Date(Date.now() + form.expiryDays * 86_400_000).toISOString()
+        : null,
+    });
+    await reload();
     setForm(null);
-    setSecret({ rotated: false });
+    setSecret({
+      rotated: false,
+      keyId: fresh.access_key_id,
+      secret: fresh.secret,
+    });
   }
 
   return (
@@ -155,6 +194,12 @@ function AccessKeys() {
           />
         </div>
 
+        {loadError && (
+          <div style={{ fontSize: 13, color: "var(--dgr)", marginBottom: 12 }}>
+            Không tải được danh sách key: {loadError}
+          </div>
+        )}
+
         <TableWrap>
           <table
             data-tmin=""
@@ -173,14 +218,14 @@ function AccessKeys() {
             </thead>
             <tbody>
               {keys.map((k) => {
-                const id = `k-${k.id}`;
+                const id = `k-${k.pid}`;
                 const scope = k.prefixes.length
                   ? k.prefixes[0] +
                     (k.prefixes.length > 1 ? `  +${k.prefixes.length - 1}` : "")
                   : "Toàn tài khoản";
                 return (
                   <tr
-                    key={k.id}
+                    key={k.pid}
                     className="trHover"
                     style={{ borderBottom: "1px solid var(--line)" }}
                   >
@@ -194,19 +239,19 @@ function AccessKeys() {
                       >
                         <Link
                           to="/keys/$pid"
-                          params={{ pid: k.id }}
+                          params={{ pid: k.pid }}
                           style={{
                             ...monoStyle,
                             fontSize: 13,
                             color: "var(--acc)",
                           }}
                         >
-                          {shortId(k.id)}
+                          {shortId(k.access_key_id)}
                         </Link>
                         <button
                           type="button"
                           className="btnGhost"
-                          onClick={() => copyId(k.id)}
+                          onClick={() => copyId(k.access_key_id)}
                           aria-label="Copy access key id"
                           style={{
                             width: 22,
@@ -219,7 +264,7 @@ function AccessKeys() {
                             fontSize: 12,
                           }}
                         >
-                          {copied === k.id ? "✓" : "⧉"}
+                          {copied === k.access_key_id ? "✓" : "⧉"}
                         </button>
                       </div>
                     </Td>
@@ -230,11 +275,11 @@ function AccessKeys() {
                       <div
                         style={{ display: "flex", gap: 5, flexWrap: "wrap" }}
                       >
-                        {k.perms.slice(0, 3).map((p) => (
+                        {k.permissions.slice(0, 3).map((p) => (
                           <Chip key={p}>{p}</Chip>
                         ))}
-                        {k.perms.length > 3 && (
-                          <Chip tone="faint">+{k.perms.length - 3}</Chip>
+                        {k.permissions.length > 3 && (
+                          <Chip tone="faint">+{k.permissions.length - 3}</Chip>
                         )}
                       </div>
                     </Td>
@@ -256,12 +301,13 @@ function AccessKeys() {
                       style={{
                         fontSize: 12.5,
                         color:
-                          k.expSoon || k.status === "expired"
+                          (k.days_until_expiry ?? 99) < 7 ||
+                          k.status === "expired"
                             ? "var(--acc)"
                             : "var(--dim)",
                       }}
                     >
-                      {k.exp ?? "—"}
+                      {expiryLabel(k.days_until_expiry) ?? "—"}
                     </Td>
                     <Td
                       align="center"
@@ -272,7 +318,7 @@ function AccessKeys() {
                         <RowMenu pos={menu.pos}>
                           <Link
                             to="/keys/$pid"
-                            params={{ pid: k.id }}
+                            params={{ pid: k.pid }}
                             className="menuItem"
                             style={menuItemStyle}
                             onClick={menu.close}
@@ -285,15 +331,7 @@ function AccessKeys() {
                             style={menuItemStyle}
                             onClick={() => {
                               menu.close();
-                              // TODO(slice#7): PATCH /api/keys/:pid {status}
-                              const next =
-                                k.status === "disabled" ? "active" : "disabled";
-                              setStatus(k.id, next);
-                              toast(
-                                next === "active"
-                                  ? "Đã mở lại key"
-                                  : "Đã tạm khoá key",
-                              );
+                              void toggleStatus(k);
                             }}
                           >
                             {k.status === "disabled"
@@ -306,9 +344,7 @@ function AccessKeys() {
                             style={menuItemStyle}
                             onClick={() => {
                               menu.close();
-                              // TODO(slice#7): POST /api/keys/:pid/rotate
-                              setStatus(k.id, "disabled");
-                              setSecret({ rotated: true });
+                              void doRotate(k);
                             }}
                           >
                             Xoay khoá
@@ -326,7 +362,7 @@ function AccessKeys() {
                             style={{ ...menuItemStyle, color: "var(--dgr)" }}
                             onClick={() => {
                               menu.close();
-                              setRevoking(k.id);
+                              setRevoking(k);
                             }}
                           >
                             Thu hồi vĩnh viễn
@@ -482,15 +518,19 @@ function AccessKeys() {
           </FormBody>
           <FormFoot>
             <FormCancel onClick={() => setForm(null)} />
-            <FormSubmit label="Tạo key" enabled onClick={createKey} />
+            <FormSubmit
+              label="Tạo key"
+              enabled
+              onClick={() => void createKey()}
+            />
           </FormFoot>
         </FormModal>
       )}
 
       {secret && (
         <SecretRevealModal
-          keyId={NEW_KEY.id}
-          secret={NEW_KEY.secret}
+          keyId={secret.keyId}
+          secret={secret.secret}
           rotated={secret.rotated}
           onClose={() => {
             setSecret(null);
@@ -503,15 +543,10 @@ function AccessKeys() {
         <ConfirmDangerModal
           title="Thu hồi access key"
           body="Thu hồi là vĩnh viễn — key không mở lại được. Mọi ứng dụng đang dùng key này sẽ nhận 403 ngay lập tức."
-          target={revoking}
+          target={revoking.access_key_id}
           confirmLabel="Thu hồi key"
           onClose={() => setRevoking(null)}
-          onConfirm={() => {
-            // TODO(slice#7): DELETE /api/keys/:pid
-            setStatus(revoking, "revoked");
-            setRevoking(null);
-            toast("Đã thu hồi key", "danger");
-          }}
+          onConfirm={() => void doRevoke(revoking.pid)}
         />
       )}
     </>

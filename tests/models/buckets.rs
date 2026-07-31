@@ -171,3 +171,23 @@ async fn store_rejects_unknown_provider_and_keeps_secret_on_omit() {
         .unwrap();
     assert_eq!(b.decrypt_store_secret().unwrap(), "keep-me");
 }
+
+#[tokio::test]
+#[serial]
+async fn list_for_user_excludes_system_and_other_owners() {
+    let boot = boot_test::<App>().await.expect("boot");
+    let db = &boot.app_context.db;
+    let a = user(db, "list-a@ex.com").await;
+    let b = user(db, "list-b@ex.com").await;
+
+    buckets::Model::create(db, a, "a-two", 0).await.unwrap();
+    buckets::Model::create(db, a, "a-one", 0).await.unwrap();
+    buckets::Model::create(db, b, "b-one", 0).await.unwrap();
+    buckets::Model::create_system(db, "shared-pool", 0)
+        .await
+        .unwrap();
+
+    let rows = buckets::Model::list_for_user(db, a).await.unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["a-one", "a-two"]); // ordered by name
+}

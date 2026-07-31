@@ -47,6 +47,7 @@ Admin **không** tự động thấy nút "xoá object của user khác" — khu
 /buckets/:name/settings     Quota + xoá bucket
 /keys                       Danh sách access key
 /keys/:pid                  Chi tiết key: quyền + prefix
+/api                        Token + danh sách endpoint
 /settings                   Hồ sơ, đổi mật khẩu
 
 /admin                      Dashboard hệ thống          (chỉ admin)
@@ -221,13 +222,23 @@ Trang (không modal, vì có 2 khối sửa): header là access key id + status 
 
 Secret **không bao giờ** hiện lại ở đây — chỉ ghi dòng chữ xám: "Secret chỉ hiện một lần lúc tạo. Mất thì xoay khoá."
 
-### 6.7 Settings (`/settings`)
+### 6.7 API (`/api`)
+
+Ba khối:
+
+1. **Token** — ô mono che sẵn, nút *Hiện* / *Copy* / *Đổi token*. Đổi token mở ConfirmDangerDialog: "Token cũ mất hiệu lực ngay. Mọi service đang dùng token này sẽ nhận 401 cho tới khi cập nhật config." Dưới ô ghi rõ: mỗi tài khoản chỉ có **một** token, đổi là đổi cho mọi service cùng lúc.
+2. **Bảng endpoint** — method / path / mô tả cho toàn bộ `/api/*`; mỗi dòng bung được snippet `curl` copy-được (token chỉ chèn vào snippet khi đang ở trạng thái *Hiện*).
+3. **Kiểm tra kết nối** — gọi `GET /api/whoami` bằng chính PAT (không phải JWT session), in `HTTP <code>` + body thô.
+
+Không có snippet client S3 (aws-cli / boto3 / rclone) — chờ SigV4 (slice #3); viết trước là hướng dẫn cấu hình một endpoint chưa tồn tại.
+
+### 6.8 Settings (`/settings`)
 Hồ sơ (name, email — email đọc-chỉ), đổi mật khẩu (mật khẩu cũ + mới + xác nhận), và khối chỉ-đọc "Quota tài khoản" với QuotaBar + dòng "Cần thêm dung lượng? Liên hệ admin."
 
-### 6.8 Admin dashboard (`/admin`)
+### 6.9 Admin dashboard (`/admin`)
 Stat card: tổng user, tổng bucket, tổng object, tổng dung lượng dùng, tổng quota đã cấp (và tỉ lệ oversubscribe nếu tổng quota > dung lượng vật lý). Bảng "Top 10 user theo dung lượng" và bảng "User sắp đầy quota (≥90%)".
 
-### 6.9 Admin — Users (`/admin/users`)
+### 6.10 Admin — Users (`/admin/users`)
 
 | Cột | Nguồn |
 |---|---|
@@ -247,7 +258,7 @@ Có ô search theo email/tên, filter theo role và theo "quota ≥90%".
 
 **Đổi role**: dropdown; hạ chính mình từ admin xuống user thì chặn ("Không thể tự hạ quyền chính mình").
 
-### 6.10 Admin — Chi tiết user (`/admin/users/:pid`)
+### 6.11 Admin — Chi tiết user (`/admin/users/:pid`)
 Header: email, role, QuotaBar tài khoản, nút Sửa quota / Đổi role. Ba tab: **Buckets** (bảng chỉ-đọc + sửa quota từng bucket), **Access keys** (chỉ-đọc + nút tạm khoá/thu hồi khẩn cấp), **Hoạt động** (placeholder "Sắp có" — audit log là slice #6).
 
 ---

@@ -36,6 +36,7 @@ function navKeyFor(pathname: string): NavKey {
   if (pathname === "/") return "dash";
   if (pathname.startsWith("/buckets")) return "buckets";
   if (pathname.startsWith("/keys")) return "keys";
+  if (pathname.startsWith("/api")) return "api";
   if (pathname.startsWith("/admin/users")) return "users";
   if (pathname.startsWith("/admin/buckets")) return "abuckets";
   if (pathname.startsWith("/admin")) return "admin";

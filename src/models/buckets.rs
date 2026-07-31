@@ -1,4 +1,5 @@
 use loco_rs::prelude::*;
+use sea_orm::QueryOrder;
 use uuid::Uuid;
 
 use super::crypto;
@@ -99,6 +100,19 @@ impl Model {
         }
         .insert(db)
         .await?)
+    }
+
+    /// Buckets owned by a user. System pool buckets (`user_id IS NULL`) are
+    /// not part of anyone's account listing.
+    ///
+    /// # Errors
+    /// Returns an error on DB failure.
+    pub async fn list_for_user(db: &DatabaseConnection, user_id: i32) -> ModelResult<Vec<Self>> {
+        Ok(Entity::find()
+            .filter(Column::UserId.eq(user_id))
+            .order_by_asc(Column::Name)
+            .all(db)
+            .await?)
     }
 
     /// # Errors

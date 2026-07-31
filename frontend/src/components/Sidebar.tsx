@@ -7,6 +7,7 @@ export type NavKey =
   | "dash"
   | "buckets"
   | "keys"
+  | "api"
   | "admin"
   | "users"
   | "abuckets"
@@ -130,6 +131,33 @@ function IconBucket() {
         y2="6.4"
         stroke="currentColor"
         strokeWidth="1.4"
+      />
+    </svg>
+  );
+}
+
+function IconApi() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      style={{ flex: "0 0 16px" }}
+    >
+      <path
+        d="M6 3.2C4.4 3.2 4.6 6.6 3 8c1.6 1.4 1.4 4.8 3 4.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10 3.2c1.6 0 1.4 3.4 3 4.8-1.6 1.4-1.4 4.8-3 4.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
       />
     </svg>
   );
@@ -413,6 +441,10 @@ export function Sidebar({
         >
           <IconKey />
           {showLabels && <span>Access Keys</span>}
+        </Link>
+        <Link to="/api" aria-label="API" style={rowStyle(active === "api")}>
+          <IconApi />
+          {showLabels && <span>API</span>}
         </Link>
 
         {isAdmin && (

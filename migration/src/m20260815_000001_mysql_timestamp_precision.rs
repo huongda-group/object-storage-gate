@@ -1,12 +1,12 @@
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
-/// MySQL-only: nâng mọi cột `TIMESTAMP` lên `TIMESTAMP(6)`.
+/// `MySQL`-only: nâng mọi cột `TIMESTAMP` lên `TIMESTAMP(6)`.
 ///
-/// `TIMESTAMP` của MySQL mặc định precision 0 — nó *làm tròn* tới giây, kể cả
-/// làm tròn lên. Postgres `timestamptz` và SQLite (lưu chuỗi ISO) đều giữ phần
+/// `TIMESTAMP` của `MySQL` mặc định precision 0 — nó *làm tròn* tới giây, kể cả
+/// làm tròn lên. Postgres `timestamptz` và `SQLite` (lưu chuỗi ISO) đều giữ phần
 /// thập phân, nên cùng một dòng code sẽ cho kết quả lệch tới nửa giây trên
-/// MySQL: `expires_at` đọc ra xa hơn lúc ghi, `days_until_expiry()` nhảy một
+/// `MySQL`: `expires_at` đọc ra xa hơn lúc ghi, `days_until_expiry()` nhảy một
 /// ngày, magic link hết hạn trễ hơn trần đã tính.
 ///
 /// Duyệt `information_schema` thay vì liệt kê tay từng cột: cột timestamp nằm
@@ -51,7 +51,9 @@ impl MigrationTrait for Migration {
                 if default.to_uppercase().starts_with("CURRENT_TIMESTAMP") {
                     sql.push_str(" DEFAULT CURRENT_TIMESTAMP(6)");
                 } else {
-                    sql.push_str(&format!(" DEFAULT '{}'", default.replace('\'', "''")));
+                    sql.push_str(" DEFAULT '");
+                    sql.push_str(&default.replace('\'', "''"));
+                    sql.push('\'');
                 }
             }
             // EXTRA gộp nhiều thứ, phần lớn không phải DDL hợp lệ (MySQL 8 nhét

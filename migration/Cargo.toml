@@ -19,4 +19,8 @@ features = [
   # View the list of supported features at https://www.sea-ql.org/SeaORM/docs/install-and-config/database-and-async-runtime.
   # e.g.
   "runtime-tokio-rustls", # `ASYNC_RUNTIME` feature
+  # loco-rs pins sea-orm-migration to sqlx-postgres + sqlx-sqlite only, so MySQL
+  # has to be turned on here — without it `SchemaManager` panics with
+  # "MySql feature is off" the moment a migration runs against MySQL.
+  "sqlx-mysql",
 ]

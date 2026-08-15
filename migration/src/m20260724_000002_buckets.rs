@@ -1,6 +1,8 @@
 use loco_rs::schema::*;
 use sea_orm_migration::prelude::*;
-use sea_orm_migration::sea_orm::ConnectionTrait;
+use sea_orm_migration::sea_orm::{ConnectionTrait, DatabaseBackend};
+
+const IDX_BUCKETS_OWNER_NAME: &str = "idx_buckets_owner_name";
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -31,12 +33,23 @@ impl MigrationTrait for Migration {
         // Unique per owner. COALESCE, not a plain (user_id, name) index: NULLs
         // compare distinct, which would let two system pools share a name. 0 is a
         // safe sentinel because user ids start at 1.
-        m.get_connection()
-            .execute_unprepared(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_buckets_owner_name \
-                 ON buckets (COALESCE(user_id, 0), name)",
-            )
-            .await?;
+        //
+        // Functional index → sea-query dựng không được, phải viết SQL thô và branch:
+        // MySQL bắt buộc bọc biểu thức trong ngoặc kép và không có `IF NOT EXISTS`
+        // cho index (nên guard bằng `has_index`).
+        if !m.has_index("buckets", IDX_BUCKETS_OWNER_NAME).await? {
+            let sql = match m.get_database_backend() {
+                DatabaseBackend::MySql => format!(
+                    "CREATE UNIQUE INDEX {IDX_BUCKETS_OWNER_NAME} \
+                     ON buckets ((COALESCE(user_id, 0)), name)"
+                ),
+                _ => format!(
+                    "CREATE UNIQUE INDEX {IDX_BUCKETS_OWNER_NAME} \
+                     ON buckets (COALESCE(user_id, 0), name)"
+                ),
+            };
+            m.get_connection().execute_unprepared(&sql).await?;
+        }
         Ok(())
     }
 

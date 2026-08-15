@@ -69,8 +69,15 @@ mailer:
 
 # Database Configuration
 database:
-  # Database connection URI
+  # Database connection URI. Test mặc định chạy SQLite in-memory.
+{%- set db_type = get_env(name="DB_TYPE", default="sqlite") %}
+{%- if db_type == "mysql" %}
+  uri: {{ get_env(name="DATABASE_URL", default="mysql://loco:loco@localhost:3306/object_storage_gate_test") }}
+{%- elif db_type == "postgres" %}
+  uri: {{ get_env(name="DATABASE_URL", default="postgres://loco:loco@localhost:5432/object-storage-gate_test") }}
+{%- else %}
   uri: "{{ get_env(name='DATABASE_URL', default='sqlite::memory:') }}"
+{%- endif %}
   # When enabled, the sql query will be logged.
   enable_logging: false
   # Set the timeout duration when acquiring a connection.

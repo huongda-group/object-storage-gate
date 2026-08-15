@@ -58,7 +58,13 @@ jobs:
 
     permissions:
       contents: read
-    
+
+    strategy:
+      # Một backend đỏ không được giết hai backend kia — cần thấy hết mới chẩn được.
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres, mysql]
+
     services:
       redis:
         image: redis
@@ -82,6 +88,20 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: mysql_test
+          MYSQL_USER: mysql
+          MYSQL_PASSWORD: mysql
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -umysql -pmysql"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout the code
@@ -98,6 +118,13 @@ jobs:
         working-directory: ./frontend
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
+      - name: Pick DATABASE_URL for ${{ matrix.db }}
+        run: |
+          case "${{ matrix.db }}" in
+            sqlite)   echo "DATABASE_URL=sqlite::memory:" >> "$GITHUB_ENV" ;;
+            postgres) echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres_test" >> "$GITHUB_ENV" ;;
+            mysql)    echo "DATABASE_URL=mysql://mysql:mysql@localhost:3306/mysql_test" >> "$GITHUB_ENV" ;;
+          esac
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:
@@ -105,5 +132,4 @@ jobs:
           args: --all-features --all
         env:
           REDIS_URL: redis://localhost:${{job.services.redis.ports[6379]}}
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres_test
           

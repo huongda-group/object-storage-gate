@@ -36,12 +36,21 @@ without them:
 | `DATABASE_URL` | full URI; the scheme picks the backend |
 | `JWT_SECRET` | console session signing key |
 | `OSG_MASTER_KEY` | base64 of 32 random bytes — AES-256-GCM key for every stored secret |
+| `RATE_LIMIT_PER_MINUTE` | requests per minute per IP after the burst; default `60` |
+| `RATE_LIMIT_BURST` | back-to-back requests allowed before the rate applies; default `30` |
+| `RATE_LIMIT_TRUST_PROXY` | `true` to read the client IP from `Forwarded` / `X-Forwarded-For`; default `false` |
 
 Generate a master key with `openssl rand -base64 32`. `App::after_context`
 refuses to boot production when `OSG_MASTER_KEY` is missing, is not valid
 base64, does not decode to exactly 32 bytes, or is the development key checked
 into this repository. The check runs on the CLI subcommands too, so
 `db migrate` is refused on the same terms.
+
+`RATE_LIMIT_TRUST_PROXY` needs care in both directions. Left off behind a
+reverse proxy, every request shares the proxy's IP and the per-IP limit becomes
+a gateway-wide one. Turned on without a proxy that overwrites the header,
+anyone resets their own bucket by sending a new value. Set it only when a proxy
+you control sets the header.
 
 Compose keeps the stack (app + valkey) in `docker-compose.yml` and adds one
 overlay per database:

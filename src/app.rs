@@ -64,7 +64,9 @@ impl Hooks for App {
     }
 
     async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
-        Ok(vec![])
+        Ok(vec![Box::new(
+            crate::initializers::rate_limit::RateLimitInitializer,
+        )])
     }
 
     fn routes(_ctx: &AppContext) -> AppRoutes {

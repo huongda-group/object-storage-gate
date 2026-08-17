@@ -3,3 +3,4 @@ mod api;
 mod auth;
 mod keys;
 mod prepare_data;
+mod rate_limit;

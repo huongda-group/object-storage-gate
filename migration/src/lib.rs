@@ -13,6 +13,7 @@ mod m20260815_000001_mysql_timestamp_precision;
 mod m20260817_000001_auth_teardown;
 mod m20260817_000002_hash_api_key;
 mod m20260817_000003_column_lengths;
+mod m20260817_000004_binary_collation;
 
 pub struct Migrator;
 
@@ -32,6 +33,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260817_000001_auth_teardown::Migration),
             Box::new(m20260817_000002_hash_api_key::Migration),
             Box::new(m20260817_000003_column_lengths::Migration),
+            Box::new(m20260817_000004_binary_collation::Migration),
             // inject-above (do not remove this comment)
         ]
     }

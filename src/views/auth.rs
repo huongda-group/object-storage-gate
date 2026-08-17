@@ -7,7 +7,7 @@ pub struct LoginResponse {
     pub token: String,
     pub pid: String,
     pub name: String,
-    pub is_verified: bool,
+    pub must_change_password: bool,
 }
 
 impl LoginResponse {
@@ -17,7 +17,8 @@ impl LoginResponse {
             token: token.to_string(),
             pid: user.pid.to_string(),
             name: user.name.clone(),
-            is_verified: user.email_verified_at.is_some(),
+            // Wired to the real column in task 2, once the migration adds it.
+            must_change_password: false,
         }
     }
 }

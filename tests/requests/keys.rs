@@ -76,26 +76,16 @@ async fn other_users_key_is_404_not_403() {
             .unwrap()
             .to_string();
 
-        // A second registered user, logged in independently.
-        request
-            .post("/api/auth/register")
-            .json(&serde_json::json!({
-                "name": "other",
-                "email": "other@loco.com",
-                "password": "1234"
-            }))
-            .await;
-        let login = request
-            .post("/api/auth/login")
-            .json(&serde_json::json!({
-                "email": "other@loco.com",
-                "password": "1234"
-            }))
-            .await;
-        let other_token = login.json::<serde_json::Value>()["token"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        // A second account, created through the model and logged in independently.
+        prepare_data::create_user(
+            &ctx,
+            "other@loco.com",
+            "12341234",
+            "other",
+            object_storage_gate::models::users::ROLE_USER,
+        )
+        .await;
+        let other_token = prepare_data::login(&request, "other@loco.com", "12341234").await;
         let (other_key, other_value) = prepare_data::auth_header(&other_token);
 
         let res = request

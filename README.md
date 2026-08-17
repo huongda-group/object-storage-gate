@@ -91,6 +91,8 @@ docker compose -f docker-compose.yml -f docker-compose/mysql.yml    up -d
 docker compose -f docker-compose.yml -f docker-compose/sqlite.yml   up -d
 ```
 
+Image build, required environment and publishing: `docs/docker.md`.
+
 Known ceiling: `objects.object_key` is `varchar(255)` while S3 allows keys up to 1024
 bytes. Widening it to 1024 would push the unique index `(bucket_id, object_key)` past
 InnoDB's 3072-byte limit under utf8mb4, so that change has to move the unique key onto
@@ -219,6 +221,7 @@ cargo clippy --all-targets && cargo fmt
 | `docs/superpowers/specs/` | design specs, one per slice |
 | `docs/superpowers/plans/` | step-by-step implementation plans |
 | `docs/ui/admin-ui-spec.md` | console behaviour, copy and data shapes |
+| `docs/docker.md` | image layout, running each backend, publishing to Docker Hub |
 | `tests/s3/README.md` | running the conformance suite, IAM policies, safety |
 
 ## Constraints worth knowing before changing anything

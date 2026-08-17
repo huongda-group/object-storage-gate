@@ -19,15 +19,28 @@ import { ShellProvider } from "../components/shell";
 import { clearToken, currentCached, getToken, logout } from "../lib/auth";
 
 export const Route = createFileRoute("/_app")({
-  // UX guard only — real enforcement is server-side (slice #7).
-  beforeLoad: async () => {
+  // UX guard only — real enforcement is server-side, in the Caller extractor.
+  beforeLoad: async ({ location }) => {
     if (!getToken()) throw redirect({ to: "/login" });
+    let user: Awaited<ReturnType<typeof currentCached>>;
     try {
-      return { user: await currentCached() };
+      user = await currentCached();
     } catch {
       clearToken();
       throw redirect({ to: "/login" });
     }
+
+    // The server refuses every other endpoint until the temporary password is replaced, so
+    // sending the user anywhere else would only render a screen of failed requests.
+    const onChangePassword = location.pathname === "/change-password";
+    if (user.must_change_password && !onChangePassword) {
+      throw redirect({ to: "/change-password" });
+    }
+    if (!user.must_change_password && onChangePassword) {
+      throw redirect({ to: "/" });
+    }
+
+    return { user };
   },
   component: AppShell,
 });
@@ -48,6 +61,17 @@ function AppShell() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [confirm, setConfirm] = useState(false);
+
+  // No sidebar, no header: there is nothing else this account may do yet.
+  if (user.must_change_password) {
+    return (
+      <ToastProvider>
+        <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+          <Outlet />
+        </div>
+      </ToastProvider>
+    );
+  }
 
   return (
     <ToastProvider>

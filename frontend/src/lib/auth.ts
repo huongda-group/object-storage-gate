@@ -6,6 +6,7 @@ export type CurrentUser = {
   email: string;
   role: "user" | "admin";
   max_bytes: number;
+  must_change_password: boolean;
 };
 
 export class ApiError extends Error {
@@ -32,6 +33,9 @@ export function clearToken(): void {
   sessionStorage.removeItem(TOKEN_KEY);
 }
 
+// beforeLoad runs on every navigation; fetch the user once per session instead.
+let currentCache: Promise<CurrentUser> | null = null;
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) {
@@ -42,7 +46,15 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
-    if (res.status === 401) clearToken();
+    // An expired or revoked session used to only clear the token, leaving a fully rendered
+    // console where every action failed silently until the next navigation.
+    if (res.status === 401) {
+      clearToken();
+      currentCache = null;
+      if (globalThis.location?.pathname !== "/login") {
+        globalThis.location?.assign("/login");
+      }
+    }
     throw new ApiError(res.status, (await res.text()) || res.statusText);
   }
   const text = await res.text();
@@ -56,7 +68,7 @@ export type LoginResponse = {
   token: string;
   pid: string;
   name: string;
-  is_verified: boolean;
+  must_change_password: boolean;
 };
 
 export const login = (email: string, password: string) =>
@@ -69,28 +81,13 @@ export const setupStatus = () =>
 export const setupAdmin = (name: string, email: string, password: string) =>
   post<LoginResponse>("/api/auth/setup", { name, email, password });
 
-export const register = (name: string, email: string, password: string) =>
-  post<void>("/api/auth/register", { name, email, password });
-
-export const forgot = (email: string) =>
-  post<void>("/api/auth/forgot", { email });
-
-export const reset = (token: string, password: string) =>
-  post<void>("/api/auth/reset", { token, password });
-
-export const magicLink = (email: string) =>
-  post<void>("/api/auth/magic-link", { email });
-
-export const resendVerification = (email: string) =>
-  post<void>("/api/auth/resend-verification-mail", { email });
-
-export const verify = (token: string) =>
-  api<void>(`/api/auth/verify/${encodeURIComponent(token)}`);
+/** Also the way an admin-issued temporary password gets replaced. */
+export const changePassword = (
+  current_password: string,
+  new_password: string,
+) => post<void>("/api/me/password", { current_password, new_password });
 
 export const current = () => api<CurrentUser>("/api/auth/current");
-
-// beforeLoad runs on every navigation; fetch the user once per session instead.
-let currentCache: Promise<CurrentUser> | null = null;
 
 export function currentCached(): Promise<CurrentUser> {
   if (!currentCache) {

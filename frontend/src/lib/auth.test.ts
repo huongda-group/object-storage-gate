@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api, clearToken, getToken, setToken } from "./auth";
+import {
+  ApiError,
+  api,
+  changePassword,
+  clearToken,
+  getToken,
+  setToken,
+} from "./auth";
 
 afterEach(() => {
   localStorage.clear();
@@ -83,5 +90,29 @@ describe("api", () => {
   it("resolves undefined for an empty 204 body", async () => {
     vi.stubGlobal("fetch", async () => new Response(null, { status: 204 }));
     await expect(api("/api/auth/forgot")).resolves.toBeUndefined();
+  });
+});
+
+describe("changePassword", () => {
+  it("posts current and new password with the bearer token", async () => {
+    setToken("tok-123");
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response("", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await changePassword("old-one", "new-one-please");
+
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/me/password");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(init?.body as string)).toEqual({
+      current_password: "old-one",
+      new_password: "new-one-please",
+    });
+    expect(new Headers(init?.headers).get("Authorization")).toBe(
+      "Bearer tok-123",
+    );
   });
 });

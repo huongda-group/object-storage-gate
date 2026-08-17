@@ -1,6 +1,19 @@
-import { Outlet, createFileRoute } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { setupStatus } from "../lib/auth";
 
-export const Route = createFileRoute("/_auth")({ component: AuthShell });
+export const Route = createFileRoute("/_auth")({
+  // ponytail: one GET per auth-page load, no cache — setup can complete in
+  // another tab, so a stale "needs setup" would strand the visitor on /setup.
+  beforeLoad: async ({ location }) => {
+    const onSetup = location.pathname === "/setup";
+    const { needs_setup } = await setupStatus().catch(() => ({
+      needs_setup: false,
+    }));
+    if (needs_setup && !onSetup) throw redirect({ to: "/setup" });
+    if (!needs_setup && onSetup) throw redirect({ to: "/login" });
+  },
+  component: AuthShell,
+});
 
 function AuthShell() {
   return (

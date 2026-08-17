@@ -62,6 +62,13 @@ export type LoginResponse = {
 export const login = (email: string, password: string) =>
   post<LoginResponse>("/api/auth/login", { email, password });
 
+/** True until the very first user exists — the console then sends visitors to /setup. */
+export const setupStatus = () =>
+  api<{ needs_setup: boolean }>("/api/auth/setup");
+
+export const setupAdmin = (name: string, email: string, password: string) =>
+  post<LoginResponse>("/api/auth/setup", { name, email, password });
+
 export const register = (name: string, email: string, password: string) =>
   post<void>("/api/auth/register", { name, email, password });
 

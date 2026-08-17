@@ -270,6 +270,53 @@ impl Model {
         Ok(user)
     }
 
+    /// Returns whether the instance has no user at all, i.e. it still needs its
+    /// first-run admin setup.
+    ///
+    /// # Errors
+    ///
+    /// When the query fails
+    pub async fn any_exists(db: &DatabaseConnection) -> ModelResult<bool> {
+        Ok(users::Entity::find().one(db).await?.is_some())
+    }
+
+    /// Creates the first-run admin: an admin-role user, verified up front so no
+    /// mail round-trip is needed to log in. Refused once any user exists.
+    ///
+    /// # Errors
+    ///
+    /// When a user already exists, or the user could not be saved into the DB
+    pub async fn create_first_admin(
+        db: &DatabaseConnection,
+        params: &RegisterParams,
+    ) -> ModelResult<Self> {
+        let txn = db.begin().await?;
+
+        // ponytail: read-committed lets two concurrent setup calls on a
+        // brand-new empty DB both see zero users and both become admin. Take a
+        // lock (advisory / sentinel row) if that window ever matters.
+        if users::Entity::find().one(&txn).await?.is_some() {
+            return Err(ModelError::EntityAlreadyExists {});
+        }
+
+        let password_hash =
+            hash::hash_password(&params.password).map_err(|e| ModelError::Any(e.into()))?;
+        let user = users::ActiveModel {
+            email: ActiveValue::set(params.email.to_string()),
+            password: ActiveValue::set(password_hash),
+            name: ActiveValue::set(params.name.to_string()),
+            role: ActiveValue::set(ROLE_ADMIN.to_string()),
+            email_verified_at: ActiveValue::set(Some(Local::now().into())),
+            ..Default::default()
+        }
+        .insert(&txn)
+        .await?;
+
+        txn.commit().await?;
+
+        Ok(user)
+    }
+
     /// Creates a JWT
     ///
     /// # Errors

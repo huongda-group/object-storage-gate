@@ -6,7 +6,8 @@ use crate::{
     },
     views::auth::{CurrentResponse, LoginResponse},
 };
-use loco_rs::prelude::*;
+use axum::http::StatusCode;
+use loco_rs::{controller::ErrorDetail, prelude::*};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -17,6 +18,11 @@ fn get_allow_email_domain_re() -> &'static Regex {
     EMAIL_DOMAIN_RE.get_or_init(|| {
         Regex::new(r"@example\.com$|@gmail\.com$").expect("Failed to compile regex")
     })
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SetupStatusResponse {
+    pub needs_setup: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -38,6 +44,40 @@ pub struct MagicLinkParams {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ResendVerificationParams {
     pub email: String,
+}
+
+/// Reports whether this instance still has no user, i.e. the console should
+/// send the visitor to the first-run admin setup page. Public on purpose: the
+/// setup page is reachable before any credential exists.
+#[debug_handler]
+async fn setup_status(State(ctx): State<AppContext>) -> Result<Response> {
+    format::json(SetupStatusResponse {
+        needs_setup: !users::Model::any_exists(&ctx.db).await?,
+    })
+}
+
+/// Creates the first admin of a fresh instance and logs it straight in.
+/// Refused with 403 once any user exists.
+#[debug_handler]
+async fn setup_admin(
+    State(ctx): State<AppContext>,
+    Json(params): Json<RegisterParams>,
+) -> Result<Response> {
+    if users::Model::any_exists(&ctx.db).await? {
+        return Err(Error::CustomError(
+            StatusCode::FORBIDDEN,
+            ErrorDetail::new("setup_done", "setup has already been completed"),
+        ));
+    }
+
+    let user = users::Model::create_first_admin(&ctx.db, &params).await?;
+
+    let jwt_secret = ctx.config.get_jwt_config()?;
+    let token = user
+        .generate_jwt(&jwt_secret.secret, jwt_secret.expiration)
+        .or_else(|_| unauthorized("unauthorized!"))?;
+
+    format::json(LoginResponse::new(&user, &token))
 }
 
 /// Register function creates a new user with the given parameters and sends a
@@ -261,6 +301,8 @@ async fn resend_verification_email(
 pub fn routes() -> Routes {
     Routes::new()
         .prefix("/api/auth")
+        .add("/setup", get(setup_status))
+        .add("/setup", post(setup_admin))
         .add("/register", post(register))
         .add("/verify/{token}", get(verify))
         .add("/login", post(login))

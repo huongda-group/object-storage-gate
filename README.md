@@ -84,7 +84,7 @@ DB_TYPE=mysql cargo loco start
 DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test
 ```
 
-Docker Compose keeps the stack (app + valkey) in `docker-compose.yml` and one overlay
+Docker Compose keeps the app in `docker-compose.yml` and one overlay
 per database:
 
 ```sh

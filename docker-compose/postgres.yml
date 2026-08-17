@@ -1,24 +1,27 @@
 # Overlay Postgres. Dùng chung với docker-compose.yml ở thư mục gốc:
 #   docker compose -f docker-compose.yml -f docker-compose/postgres.yml up -d
+#
+# Không map cổng 5432 ra host: app nói chuyện với db qua mạng nội bộ của compose. Bản trước
+# publish cổng kèm mật khẩu mặc định `loco`, tức là đặt database production ra mạng của host
+# sau một mật khẩu hai chữ — đi vòng qua toàn bộ mô hình bảo mật của gateway.
 services:
   db:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: loco
-      POSTGRES_PASSWORD: loco
-      POSTGRES_DB: object-storage-gate_production
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-object-storage-gate_production}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U loco"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
       retries: 10
 
   app:
     environment:
-      DATABASE_URL: postgres://loco:loco@db:5432/object-storage-gate_production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-object-storage-gate_production}
     depends_on:
       db:
         condition: service_healthy

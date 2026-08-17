@@ -1,25 +1,32 @@
 # Overlay MySQL (>= 8.0.13 — cần functional index cho idx_buckets_owner_name).
 #   docker compose -f docker-compose.yml -f docker-compose/mysql.yml up -d
+#
+# Không map cổng 3306 ra host, và không có mật khẩu mặc định. Bản trước publish cổng kèm
+# MYSQL_ROOT_PASSWORD: loco, tức là đặt database production ra mạng của host sau một mật
+# khẩu hai chữ.
 services:
   db:
     image: mysql:8
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: loco
-      MYSQL_DATABASE: object_storage_gate_production
-      MYSQL_USER: loco
-      MYSQL_PASSWORD: loco
-    ports:
-      - "3306:3306"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-object_storage_gate_production}
+      MYSQL_USER: ${MYSQL_USER:?set MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
     volumes:
       - mysqldata:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uloco", "-ploco"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD}",
+        ]
       interval: 5s
       retries: 20
 
   app:
     environment:
-      DATABASE_URL: mysql://loco:loco@db:3306/object_storage_gate_production
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-object_storage_gate_production}
     depends_on:
       db:
         condition: service_healthy

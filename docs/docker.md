@@ -36,6 +36,9 @@ without them:
 | `DATABASE_URL` | full URI; the scheme picks the backend |
 | `JWT_SECRET` | console session signing key |
 | `OSG_MASTER_KEY` | base64 of 32 random bytes — AES-256-GCM key for every stored secret |
+| `SERVER_HOST` | public origin, e.g. `https://osg.example.com`; no default, a missing value fails the boot |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | Postgres overlay; no defaults |
+| `MYSQL_ROOT_PASSWORD` / `MYSQL_USER` / `MYSQL_PASSWORD` | MySQL overlay; no defaults |
 | `RATE_LIMIT_PER_MINUTE` | requests per minute per IP after the burst; default `60` |
 | `RATE_LIMIT_BURST` | back-to-back requests allowed before the rate applies; default `30` |
 | `RATE_LIMIT_TRUST_PROXY` | `true` to read the client IP from `Forwarded` / `X-Forwarded-For`; default `false` |
@@ -52,7 +55,7 @@ a gateway-wide one. Turned on without a proxy that overwrites the header,
 anyone resets their own bucket by sending a new value. Set it only when a proxy
 you control sets the header.
 
-Compose keeps the stack (app + valkey) in `docker-compose.yml` and adds one
+Compose keeps the app in `docker-compose.yml` and adds one
 overlay per database:
 
 ```sh
@@ -120,3 +123,36 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t youruser/object-storage-gate:0.1.0 \
   --build-arg BUILD_SHA=$(git rev-parse HEAD) --push .
 ```
+
+## Migration là bước riêng trước khi rollout
+
+`auto_migrate` đã tắt trên production. Nhiều replica cùng boot sẽ đua nhau chạy
+`Migrator::up`, và trên MySQL một migration áp dụng dở làm kẹt schema mà không
+có đường phục hồi nào được ghi lại.
+
+```sh
+docker compose run --rm app object_storage_gate-cli db migrate
+docker compose up -d
+```
+
+## Sao lưu
+
+Chụp một bản dump trước mỗi lần rollout có migration. `cargo loco db dump` chỉ
+chạy trên Postgres và SQLite — trên MySQL dùng `mysqldump`.
+
+Migration `m20260817_000001_auth_teardown` **xoá bảy cột** khỏi `users`. `down()`
+dựng lại cấu trúc nhưng không dựng lại dữ liệu.
+
+## Healthcheck
+
+`/_health` và `/_ping` trả `{"ok":true}` vô điều kiện và không chạm database.
+Chỉ `/_readiness` mới ping DB. Trỏ liveness probe vào `/_ping`, readiness probe
+vào `/_readiness`. `HEALTHCHECK` trong Dockerfile chỉ chứng minh binary chạy
+được, vì lớp runtime không có HTTP client.
+
+## TLS
+
+Image phục vụ HTTP thuần trên `0.0.0.0:5150`. Phải có một reverse proxy kết thúc
+TLS ở phía trước — SigV4 credential và JWT đi qua dây, và không có gì trong stack
+này tự mã hoá chúng. Nếu proxy đó set `X-Forwarded-For`, bật
+`RATE_LIMIT_TRUST_PROXY=true` để rate limit tính theo IP client thật.

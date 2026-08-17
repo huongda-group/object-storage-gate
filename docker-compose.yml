@@ -1,33 +1,30 @@
-# Base stack: app + valkey. Không có database — chọn một overlay trong docker-compose/:
+# Base stack: app only. Không có database — chọn một overlay trong docker-compose/:
 #
 #   docker compose -f docker-compose.yml -f docker-compose/postgres.yml up -d
 #   docker compose -f docker-compose.yml -f docker-compose/mysql.yml    up -d
 #   docker compose -f docker-compose.yml -f docker-compose/sqlite.yml   up -d
 #
 # Hoặc đặt COMPOSE_FILE trong .env rồi chạy `docker compose up -d` trống.
+#
+# auto_migrate đã tắt trên production. Chạy migration như một bước riêng trước khi rollout:
+#   docker compose run --rm app object_storage_gate-cli db migrate
+#
+# Redis/Valkey từng nằm ở đây nhưng không code nào đọc REDIS_URL, nên nó chỉ đốt bộ nhớ và
+# một volume trong khi làm người vận hành tin rằng queue đã bền và có distributed lock. Nó
+# quay lại ở slice cắm queue thật — xem docs/superpowers/plans/2026-08-17-go-live-roadmap.md.
 services:
-  valkey:
-    image: valkey/valkey:8-alpine
-    command: ["valkey-server", "--appendonly", "yes"]
-    volumes:
-      - valkeydata:/data
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
-      retries: 10
-
   app:
     build: .
+    restart: unless-stopped
     ports:
       - "5150:5150"
     environment:
       # DATABASE_URL do overlay database cung cấp.
-      REDIS_URL: redis://valkey:6379
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       OSG_MASTER_KEY: ${OSG_MASTER_KEY:?set OSG_MASTER_KEY (base64 of 32 random bytes)}
-    depends_on:
-      valkey:
-        condition: service_healthy
-
-volumes:
-  valkeydata:
+      SERVER_HOST: ${SERVER_HOST:?set SERVER_HOST, e.g. https://osg.example.com}
+    healthcheck:
+      test: ["CMD", "object_storage_gate-cli", "--help"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

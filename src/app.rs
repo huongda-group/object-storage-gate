@@ -48,14 +48,17 @@ impl Hooks for App {
         create_app::<Self, Migrator>(mode, environment, config).await
     }
 
-    // Refuse to start production with the checked-in dev master key: every access-key secret and backend-store credential would otherwise be encrypted at rest with a publicly known key.
+    // Refuse to start production with a missing, malformed, or publicly known master key: every access-key secret and backend-store credential would otherwise be encrypted at rest with a key anyone can read from git.
     // See `models::crypto`.
     // This hook (not `boot`) is the guard point because the loco CLI calls `create_app` directly and never goes through `Hooks::boot`.
     async fn after_context(ctx: AppContext) -> Result<AppContext> {
-        if ctx.environment == Environment::Production && std::env::var("OSG_MASTER_KEY").is_err() {
-            return Err(Error::string(
-                "OSG_MASTER_KEY must be set in production (base64-encoded 32-byte key)",
-            ));
+        if ctx.environment == Environment::Production {
+            let key = std::env::var("OSG_MASTER_KEY").map_err(|_| {
+                Error::string(
+                    "OSG_MASTER_KEY must be set in production (base64-encoded 32-byte key)",
+                )
+            })?;
+            crate::models::crypto::validate_master_key(&key)?;
         }
         Ok(ctx)
     }

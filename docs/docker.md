@@ -37,8 +37,11 @@ without them:
 | `JWT_SECRET` | console session signing key |
 | `OSG_MASTER_KEY` | base64 of 32 random bytes — AES-256-GCM key for every stored secret |
 
-Generate a master key with `openssl rand -base64 32`. Reusing the checked-in
-development key in production is refused by `App::after_context`.
+Generate a master key with `openssl rand -base64 32`. `App::after_context`
+refuses to boot production when `OSG_MASTER_KEY` is missing, is not valid
+base64, does not decode to exactly 32 bytes, or is the development key checked
+into this repository. The check runs on the CLI subcommands too, so
+`db migrate` is refused on the same terms.
 
 Compose keeps the stack (app + valkey) in `docker-compose.yml` and adds one
 overlay per database:

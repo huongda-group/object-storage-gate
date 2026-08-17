@@ -14,11 +14,11 @@
 
 | # | Giai đoạn | Plan | Chặn cái gì | Phụ thuộc |
 |---|---|---|---|---|
-| 1 | Xoá đăng ký + admin quản lý user | `2026-08-17-p1-auth-teardown-admin-users.md` | Blocker 1, 9 | — |
-| 2 | Siết config, deploy, CI | `2026-08-17-p2-hardening-config-ops.md` | Blocker 2, 3, 4, 5 | — |
-| 3 | Sửa tầng dữ liệu | `2026-08-17-p3-data-layer-correctness.md` | — (7 High) | — |
-| 4 | Console bỏ mock, nối API thật | `2026-08-17-p4-console-real-api.md` | Blocker 7, 8 | 1 |
-| 5 | Máy quota | `2026-08-17-p5-quota-engine.md` | Blocker 6 | 3 |
+| 1 | Xoá đăng ký + admin quản lý user | `2026-08-17-p1-auth-teardown-admin-users.md` | Blocker 1, 9 | **XONG** |
+| 2 | Siết config, deploy, CI | `2026-08-17-p2-hardening-config-ops.md` | Blocker 2, 3, 4, 5 | **XONG** |
+| 3 | Sửa tầng dữ liệu | `2026-08-17-p3-data-layer-correctness.md` | 7 High | **XONG** |
+| 4 | Console bỏ mock, nối API thật | `2026-08-17-p4-console-real-api.md` | Blocker 7, 8 | **XONG** |
+| 5 | Máy quota | `2026-08-17-p5-quota-engine.md` | Blocker 6 | **XONG** |
 | 6 | Gateway: SigV4 + route S3 + proxy | **chưa có plan — cần spec** | slice #2, #3 | 2, 3, 5 |
 | 7 | Gateway: multipart, copy, presigned, audit | **chưa có plan — cần spec** | slice #5, #6 | 6 |
 
@@ -30,7 +30,8 @@ giai đoạn 3.
 
 ## Cổng nghiệm thu
 
-**Cổng A — mở console cho người dùng nội bộ.** Xong giai đoạn 1, 2, 4.
+**Cổng A — mở console cho người dùng nội bộ. ĐÃ ĐẠT** (giai đoạn 1–5 xong,
+104 test xanh trên cả ba backend, clippy pedantic+nursery sạch).
 Lúc này: không ai tự tạo được tài khoản, admin có đường quản lý user, console
 không còn hiển thị số bịa, và deploy không còn năm lỗ hổng cấu hình.
 Chưa phục vụ S3 — console là thứ duy nhất chạy thật.
@@ -110,3 +111,31 @@ DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test
 ```
 
 Giai đoạn 3 tồn tại chính vì hai lỗi chỉ lộ trên MySQL (độ dài cột, collation).
+
+---
+
+## Phát hiện thêm khi thực thi (không có trong báo cáo kiểm định)
+
+Những cái này chỉ lộ ra khi chạy thật, không lộ khi đọc code:
+
+1. **`JWT_SECRET` phải là base64.** loco ký bằng `EncodingKey::from_base64_secret`,
+   nên một giá trị không phải base64 vẫn cho app boot rồi làm **mọi** login thất
+   bại với đúng một dòng `unauthorized!` — không phân biệt được với sai mật khẩu.
+   Giờ boot production từ chối.
+2. **`uri:` trong `production.yaml` không được quote** — một `DATABASE_URL` kết
+   thúc bằng dấu hai chấm (`sqlite::memory:`) phá YAML.
+3. **`secure_headers.preset` một mình vô tác dụng** — `is_enabled()` chỉ đọc
+   `enable`, nên preset không có `enable: true` là header không ra.
+4. **`mailer.smtp` bắt buộc có `host`** kể cả khi `enable: false`; phải gỡ hẳn
+   khối `mailer:`.
+5. **MySQL không cho drop index mà FK đang dựa vào** — migration đổi độ dài
+   `object_key` phải tạo index tạm cho khoá ngoại bám vào trước.
+6. **SQLite không `MODIFY COLUMN`** và cũng không ép độ dài varchar, nên
+   migration độ dài cột phải bỏ qua SQLite hoàn toàn.
+7. **`tower_governor` mặc định kéo cả `tonic`** (gRPC); phải tắt default features.
+8. **Rate limit theo peer IP sau reverse proxy thành giới hạn toàn cục** — thêm
+   `RATE_LIMIT_TRUST_PROXY`, mặc định tắt vì header do client gửi.
+9. **`--all-targets` cho clippy lộ 4 lint `future_not_send`** — `TestServer` cố ý
+   không `Send`; allow ở crate root của test.
+10. **Route đã gỡ không trả 404** — static SPA fallback trả 405 cho POST và
+    200 + `index.html` cho GET. Test phải assert vào body, không vào status.

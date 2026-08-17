@@ -44,3 +44,17 @@ async fn admin_role_and_limited_quota() {
     assert!(u.is_admin());
     assert!(!u.is_unlimited());
 }
+
+/// The flag is only set by an admin issuing a temporary password, never by a plain insert.
+#[tokio::test]
+#[serial]
+async fn new_user_does_not_require_password_change_by_default() {
+    let boot = boot_test::<App>().await.expect("boot");
+    seed::<App>(&boot.app_context).await.expect("seed");
+
+    let user = users::Model::find_by_email(&boot.app_context.db, "user1@example.com")
+        .await
+        .expect("find seeded user");
+
+    assert!(!user.must_change_password);
+}

@@ -17,8 +17,7 @@ impl LoginResponse {
             token: token.to_string(),
             pid: user.pid.to_string(),
             name: user.name.clone(),
-            // Wired to the real column in task 2, once the migration adds it.
-            must_change_password: false,
+            must_change_password: user.must_change_password,
         }
     }
 }
@@ -30,6 +29,7 @@ pub struct CurrentResponse {
     pub email: String,
     pub role: String,
     pub max_bytes: i64,
+    pub must_change_password: bool,
 }
 
 impl CurrentResponse {
@@ -41,6 +41,7 @@ impl CurrentResponse {
             email: user.email.clone(),
             role: user.role.clone(),
             max_bytes: user.max_bytes,
+            must_change_password: user.must_change_password,
         }
     }
 }

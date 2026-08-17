@@ -1,5 +1,6 @@
 ---
 source: tests/models/users.rs
+assertion_line: 101
 expression: existing_user
 ---
 Ok(
@@ -12,16 +13,10 @@ Ok(
         password: "$argon2id$v=19$m=19456,t=2,p=1$ETQBx4rTgNAZhSaeYZKOZg$eYTdH26CRT6nUJtacLDEboP0li6xUwUF/q5nSlQ8uuc",
         api_key: "lo-95ec80d7-cb60-4b70-9b4b-9ef74cb88758",
         name: "user1",
-        reset_token: None,
-        reset_sent_at: None,
-        email_verification_token: None,
-        email_verification_sent_at: None,
-        email_verified_at: None,
-        magic_link_token: None,
-        magic_link_expiration: None,
         role: "user",
         max_bytes: 0,
         used_bytes: 0,
         reserved_bytes: 0,
+        must_change_password: false,
     },
 )

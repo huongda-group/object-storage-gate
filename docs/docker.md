@@ -74,8 +74,8 @@ volume or empty database comes up ready.
 ## Publish
 
 `.github/workflows/docker.yaml` builds `linux/amd64` + `linux/arm64` with Buildx
-and pushes to Docker Hub. It runs on any `v*` tag, and on manual dispatch with an
-explicit tag input.
+and pushes to Docker Hub. It runs on any bare version tag — `0.1.0`, `1.2.3`, no
+leading `v` — and on manual dispatch with an explicit tag input.
 
 Repository secrets it needs:
 
@@ -87,10 +87,10 @@ Repository secrets it needs:
 The image name is `${DOCKERHUB_USERNAME}/object-storage-gate`; change
 `IMAGE_NAME` in the workflow to rename the repository half.
 
-Tags produced from `v1.2.3`: `1.2.3`, `1.2`, and `latest`.
+Tags produced from `1.2.3`: `1.2.3`, `1.2`, and `latest`.
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+git tag 0.1.0 && git push origin 0.1.0
 ```
 
 arm64 is emulated through QEMU, so that leg of the build is several times slower

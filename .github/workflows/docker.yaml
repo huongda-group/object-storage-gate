@@ -3,11 +3,12 @@ name: Publish image
 on:
   push:
     tags:
-      - "v*"
+      # Bare version tags, no leading "v": 0.1.0, 1.2.3
+      - "[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag to publish (e.g. v0.1.0 or dev)"
+        description: "Image tag to publish (e.g. 0.1.0 or dev)"
         required: true
 
 env:
@@ -50,7 +51,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6

@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 pub use super::_entities::users::{self, ActiveModel, Entity, Model};
 
+use super::_entities::buckets;
+
 /// Prefix length of a personal access token, stored in the clear so the hash can be looked up.
 const PAT_PREFIX_LEN: usize = 12;
 
@@ -344,6 +346,28 @@ impl Model {
             .order_by_desc(users::Column::Id)
             .all(db)
             .await?)
+    }
+
+    /// Deletes a user together with everything they own.
+    ///
+    /// The buckets foreign key is `ON DELETE SET NULL`, so a bare user delete would leave their bucket behind as a system pool, still carrying the encrypted upstream credentials and every object in it.
+    /// Objects cascade from their bucket, so deleting the buckets takes them too.
+    ///
+    /// # Errors
+    ///
+    /// When any of the deletes fails
+    pub async fn delete_with_owned_data(self, db: &DatabaseConnection) -> ModelResult<()> {
+        let txn = db.begin().await?;
+
+        buckets::Entity::delete_many()
+            .filter(buckets::Column::UserId.eq(self.id))
+            .exec(&txn)
+            .await?;
+
+        users::Entity::delete_by_id(self.id).exec(&txn).await?;
+
+        txn.commit().await?;
+        Ok(())
     }
 
     /// Counts admins, so the last one cannot be demoted or deleted.

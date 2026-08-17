@@ -5,11 +5,7 @@
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    controllers::api::AdminCaller,
-    models::{buckets, users},
-    views::admin::AdminUserResponse,
-};
+use crate::{controllers::api::AdminCaller, models::users, views::admin::AdminUserResponse};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UpdateUserParams {
@@ -143,17 +139,7 @@ async fn destroy(
         ));
     }
 
-    // ponytail: buckets are ON DELETE SET NULL, so deleting an owner would turn their private bucket into a system pool along with its encrypted upstream credentials.
-    // Refuse instead of leaking; P3 fixes the cascade and this guard then becomes a cascading delete.
-    let owned = buckets::Model::list_for_user(db, user.id).await?;
-    if !owned.is_empty() {
-        return Err(Error::BadRequest(
-            "delete or reassign this user's buckets first".to_string(),
-        ));
-    }
-
-    let am: users::ActiveModel = user.into();
-    am.delete(db).await?;
+    user.delete_with_owned_data(db).await?;
 
     format::json(())
 }

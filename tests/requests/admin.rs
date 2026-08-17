@@ -1,5 +1,9 @@
 use loco_rs::testing::prelude::*;
-use object_storage_gate::{app::App, models::users, views::auth::LoginResponse};
+use object_storage_gate::{
+    app::App,
+    models::{buckets, objects, users},
+    views::auth::LoginResponse,
+};
 use serial_test::serial;
 
 use super::prepare_data;
@@ -297,6 +301,57 @@ async fn admin_can_delete_a_plain_user() {
         assert!(users::Model::find_by_email(&ctx.db, "leaving@congty.vn")
             .await
             .is_err());
+    })
+    .await;
+}
+
+/// Deleting an owner must take their buckets and objects with them.
+/// The foreign key is ON DELETE SET NULL, so without this the bucket reappears as a system
+/// pool still carrying the former owner's encrypted upstream credentials and every object.
+#[tokio::test]
+#[serial]
+async fn deleting_a_user_removes_their_buckets_and_objects() {
+    request::<App, _, _>(|request, ctx| async move {
+        let admin = prepare_data::init_admin_login(&request, &ctx).await;
+
+        let (k, v) = prepare_data::auth_header(&admin.token);
+        request
+            .post("/api/admin/users")
+            .add_header(k, v)
+            .json(&serde_json::json!({
+                "email": "leftovers@congty.vn", "name": "Leftovers",
+                "password": "temp-password-1", "role": "user", "max_bytes": 0
+            }))
+            .await;
+
+        let target = users::Model::find_by_email(&ctx.db, "leftovers@congty.vn")
+            .await
+            .unwrap();
+        let bucket = buckets::Model::create(&ctx.db, target.id, "leftovers", 0)
+            .await
+            .unwrap();
+        objects::Model::put_object(&ctx.db, bucket.id, "a/b.txt", 5, "e", "text/plain")
+            .await
+            .unwrap();
+
+        let (k, v) = prepare_data::auth_header(&admin.token);
+        let res = request
+            .delete(&format!("/api/admin/users/{}", target.pid))
+            .add_header(k, v)
+            .await;
+        assert_eq!(res.status_code(), 200);
+
+        // No system pool inherited the bucket.
+        assert!(buckets::Model::find_system_by_name(&ctx.db, "leftovers")
+            .await
+            .unwrap()
+            .is_none());
+
+        // And the objects went with it.
+        assert!(objects::Model::get(&ctx.db, bucket.id, "a/b.txt")
+            .await
+            .unwrap()
+            .is_none());
     })
     .await;
 }

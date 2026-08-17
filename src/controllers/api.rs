@@ -261,19 +261,11 @@ async fn usage(caller: Caller, State(ctx): State<AppContext>) -> Result<Response
     format::json(UsageResponse::new(&caller.user, &rows))
 }
 
-#[debug_handler]
-async fn token(caller: Caller, State(_ctx): State<AppContext>) -> Result<Response> {
-    format::json(TokenResponse {
-        token: caller.user.api_key,
-    })
-}
-
+/// Issues a fresh personal access token and returns it once.
+/// There is no read endpoint: a token that can be re-read turns any stolen JWT into a permanent credential that a password change does not evict.
 #[debug_handler]
 async fn token_rotate(caller: Caller, State(ctx): State<AppContext>) -> Result<Response> {
-    let token = format!("osg_pat_{}", uuid::Uuid::new_v4().simple());
-    let mut am: users::ActiveModel = caller.user.into();
-    am.api_key = ActiveValue::set(token.clone());
-    am.update(&ctx.db).await?;
+    let (_user, token) = caller.user.rotate_api_token(&ctx.db).await?;
     format::json(TokenResponse { token })
 }
 
@@ -317,6 +309,5 @@ pub fn routes() -> Routes {
         .add("/keys/{pid}/rotate", post(rotate_key))
         .add("/buckets", get(list_buckets))
         .add("/usage", get(usage))
-        .add("/token", get(token))
         .add("/token/rotate", post(token_rotate))
 }

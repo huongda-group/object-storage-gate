@@ -5,10 +5,10 @@ use serial_test::serial;
 
 use super::prepare_data;
 
-/// Grab the account PAT through the console API, the way the /api page does.
+/// Mint an account PAT, the way the /api page does. The token is shown once, at rotation.
 async fn pat(request: &TestServer, token: &str) -> String {
     let (ak, av) = prepare_data::auth_header(token);
-    let res = request.get("/api/token").add_header(ak, av).await;
+    let res = request.post("/api/token/rotate").add_header(ak, av).await;
     res.json::<serde_json::Value>()["token"]
         .as_str()
         .unwrap()

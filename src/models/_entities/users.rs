@@ -22,6 +22,7 @@ pub struct Model {
     pub used_bytes: i64,
     pub reserved_bytes: i64,
     pub must_change_password: bool,
+    pub api_key_prefix: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

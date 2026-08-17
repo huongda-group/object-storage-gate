@@ -7,6 +7,29 @@ use uuid::Uuid;
 
 pub use super::_entities::users::{self, ActiveModel, Entity, Model};
 
+/// Prefix length of a personal access token, stored in the clear so the hash can be looked up.
+const PAT_PREFIX_LEN: usize = 12;
+
+/// Builds a fresh personal access token and its stored representation.
+///
+/// Returns `(plaintext, prefix, hash)`. The plaintext leaves the process exactly once, at rotation; the column holds only the hash.
+///
+/// # Errors
+///
+/// When hashing fails.
+fn mint_api_token() -> ModelResult<(String, String, String)> {
+    let prefix = Uuid::new_v4().simple().to_string()[..PAT_PREFIX_LEN].to_string();
+    let secret = Uuid::new_v4().simple().to_string();
+    let token = format!("osg_pat_{prefix}_{secret}");
+    let hashed = hash::hash_password(&token).map_err(|e| ModelError::Any(e.into()))?;
+    Ok((token, prefix, hashed))
+}
+
+/// Extracts the lookup prefix from a presented token.
+fn token_prefix(token: &str) -> Option<&str> {
+    token.strip_prefix("osg_pat_")?.get(..PAT_PREFIX_LEN)
+}
+
 pub const ROLE_ADMIN: &str = "admin";
 pub const ROLE_USER: &str = "user";
 
@@ -107,7 +130,11 @@ impl ActiveModelBehavior for super::_entities::users::ActiveModel {
         if insert {
             let mut this = self;
             this.pid = ActiveValue::Set(Uuid::new_v4());
-            this.api_key = ActiveValue::Set(format!("lo-{}", Uuid::new_v4()));
+            // The token minted here is intentionally discarded: a user who wants a PAT rotates one, and rotation is the only path that ever reveals it.
+            let (_plaintext, prefix, hashed) =
+                mint_api_token().map_err(|e| DbErr::Custom(e.to_string()))?;
+            this.api_key = ActiveValue::Set(hashed);
+            this.api_key_prefix = ActiveValue::Set(Some(prefix));
             Ok(this)
         } else {
             Ok(self)
@@ -118,15 +145,7 @@ impl ActiveModelBehavior for super::_entities::users::ActiveModel {
 #[async_trait]
 impl Authenticable for Model {
     async fn find_by_api_key(db: &DatabaseConnection, api_key: &str) -> ModelResult<Self> {
-        let user = users::Entity::find()
-            .filter(
-                model::query::condition()
-                    .eq(users::Column::ApiKey, api_key)
-                    .build(),
-            )
-            .one(db)
-            .await?;
-        user.ok_or_else(|| ModelError::EntityNotFound)
+        Self::find_by_api_key(db, api_key).await
     }
 
     async fn find_by_claims_key(db: &DatabaseConnection, claims_key: &str) -> ModelResult<Self> {
@@ -170,21 +189,46 @@ impl Model {
         user.ok_or_else(|| ModelError::EntityNotFound)
     }
 
-    /// finds a user by the provided api key
+    /// Finds a user by a presented personal access token.
+    ///
+    /// Looks up by the token's plaintext prefix, then verifies the full token against the stored Argon2 hash.
+    /// A prefix collision costs one extra hash verification and nothing else.
     ///
     /// # Errors
     ///
-    /// When could not find user by the given token or DB query error
+    /// When no user matches, or on a DB query error
     pub async fn find_by_api_key(db: &DatabaseConnection, api_key: &str) -> ModelResult<Self> {
-        let user = users::Entity::find()
+        let Some(prefix) = token_prefix(api_key) else {
+            return Err(ModelError::EntityNotFound);
+        };
+        let candidates = users::Entity::find()
             .filter(
                 model::query::condition()
-                    .eq(users::Column::ApiKey, api_key)
+                    .eq(users::Column::ApiKeyPrefix, prefix)
                     .build(),
             )
-            .one(db)
+            .all(db)
             .await?;
-        user.ok_or_else(|| ModelError::EntityNotFound)
+
+        candidates
+            .into_iter()
+            .find(|u| hash::verify_password(api_key, &u.api_key))
+            .ok_or(ModelError::EntityNotFound)
+    }
+
+    /// Issues a fresh personal access token, invalidating the previous one.
+    /// Returns the plaintext exactly once; it is not recoverable afterwards.
+    ///
+    /// # Errors
+    ///
+    /// When hashing or the DB write fails
+    pub async fn rotate_api_token(self, db: &DatabaseConnection) -> ModelResult<(Self, String)> {
+        let (token, prefix, hashed) = mint_api_token()?;
+        let mut am: ActiveModel = self.into();
+        am.api_key = ActiveValue::set(hashed);
+        am.api_key_prefix = ActiveValue::set(Some(prefix));
+        let user = am.update(db).await?;
+        Ok((user, token))
     }
 
     /// Verifies whether the provided plain password matches the hashed password

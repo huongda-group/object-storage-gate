@@ -2,13 +2,13 @@
 // The endpoints below are the same ones this console calls with its JWT — a PAT just lets a service reach them without a login.
 // S3 client snippets are deliberately absent until SigV4 lands — see docs/superpowers/specs/2026-07-30-management-api-design.md §6.
 import { createFileRoute } from "@tanstack/react-router";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useState } from "react";
 import { Header } from "../../components/Header";
 import { ConfirmDangerModal } from "../../components/Modal";
 import { useToast } from "../../components/Toast";
 import { useShell } from "../../components/shell";
 import { H1, Page, TableWrap, Td, Th, monoStyle } from "../../components/ui";
-import { getPat, rotatePat, whoami } from "../../lib/keys";
+import { rotatePat, whoami } from "../../lib/keys";
 
 export const Route = createFileRoute("/_app/api")({ component: ApiPage });
 
@@ -66,12 +66,6 @@ function ApiPage() {
   const [check, setCheck] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
-  useEffect(() => {
-    getPat()
-      .then((r) => setToken(r.token))
-      .catch(() => setCheck("Không lấy được token"));
-  }, []);
-
   async function copy(text: string) {
     try {
       await navigator.clipboard?.writeText(text);
@@ -82,11 +76,17 @@ function ApiPage() {
   }
 
   async function doRotate() {
-    const r = await rotatePat();
-    setToken(r.token);
-    setShown(true);
+    try {
+      const r = await rotatePat();
+      // Set the token before anything else can fail: the server keeps only a hash, so a
+      // token dropped here is unrecoverable.
+      setToken(r.token);
+      setShown(true);
+      toast("Đã đổi token — copy ngay, token này không xem lại được");
+    } catch {
+      toast("Không đổi được token. Thử lại sau.", "danger");
+    }
     setRotating(false);
-    toast("Đã đổi token — cập nhật config các service ngay");
   }
 
   async function runCheck() {
@@ -110,8 +110,10 @@ function ApiPage() {
         <div
           style={{ fontSize: 13, color: "var(--dim)", margin: "5px 0 18px" }}
         >
-          Service khác gọi API này bằng token dưới đây. Mỗi tài khoản chỉ có một
-          token — đổi token là mọi service đang dùng phải cập nhật cùng lúc.
+          Service khác gọi API này bằng personal access token. Máy chủ chỉ lưu
+          bản băm, nên token chỉ hiện đúng một lần lúc tạo — không copy kịp thì
+          tạo token mới. Mỗi tài khoản có một token; tạo mới là token cũ ngừng
+          hoạt động ngay.
         </div>
 
         <section style={{ marginBottom: 26 }}>
@@ -128,11 +130,16 @@ function ApiPage() {
                 overflowX: "auto",
               }}
             >
-              {shown ? token : "•".repeat(Math.max(token.length, 24))}
+              {token
+                ? shown
+                  ? token
+                  : "•".repeat(Math.max(token.length, 24))
+                : "Chưa tạo token — bấm “Tạo token mới”"}
             </code>
             <button
               type="button"
               className="btnGhost"
+              disabled={!token}
               onClick={() => setShown(!shown)}
             >
               {shown ? "Ẩn" : "Hiện"}
@@ -140,6 +147,7 @@ function ApiPage() {
             <button
               type="button"
               className="btnGhost"
+              disabled={!token}
               onClick={() => void copy(token)}
             >
               Copy
@@ -149,7 +157,7 @@ function ApiPage() {
               className="btnGhost"
               onClick={() => setRotating(true)}
             >
-              Đổi token
+              {token ? "Đổi token" : "Tạo token mới"}
             </button>
           </div>
           <div
@@ -163,6 +171,7 @@ function ApiPage() {
             <button
               type="button"
               className="btnGhost"
+              disabled={!token}
               onClick={() => void runCheck()}
             >
               Kiểm tra kết nối

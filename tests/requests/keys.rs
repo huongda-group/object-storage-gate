@@ -1,5 +1,5 @@
 use loco_rs::testing::prelude::*;
-use object_storage_gate::app::App;
+use object_storage_gate::{app::App, models::users};
 use serial_test::serial;
 
 use super::prepare_data;
@@ -82,7 +82,7 @@ async fn other_users_key_is_404_not_403() {
             "other@loco.com",
             "12341234",
             "other",
-            object_storage_gate::models::users::ROLE_USER,
+            users::ROLE_USER,
         )
         .await;
         let other_token = prepare_data::login(&request, "other@loco.com", "12341234").await;
@@ -163,42 +163,74 @@ async fn update_rotate_revoke_flow() {
 
 #[tokio::test]
 #[serial]
-async fn token_is_readable_and_rotatable_by_owner() {
+async fn token_is_revealed_once_at_rotation_and_never_readable() {
     request::<App, _, _>(|request, ctx| async move {
         let user = prepare_data::init_user_login(&request, &ctx).await;
         let (ak, av) = prepare_data::auth_header(&user.token);
 
-        assert_eq!(request.get("/api/token").await.status_code(), 401);
-
-        let shown = request
+        // There is no read endpoint: one that hands the token back turns any stolen JWT into
+        // a permanent credential that a password change does not evict.
+        // An unrouted GET falls through to the SPA index, so assert on the body, not the status.
+        let gone = request
             .get("/api/token")
             .add_header(ak.clone(), av.clone())
             .await;
-        assert_eq!(shown.status_code(), 200);
-        let first = shown.json::<serde_json::Value>()["token"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        assert!(!first.is_empty());
+        assert!(
+            !gone.text().contains("\"token\""),
+            "GET /api/token still returns a token"
+        );
+
+        assert_eq!(
+            request.post("/api/token/rotate").await.status_code(),
+            401,
+            "rotation must require a caller"
+        );
 
         let rotated = request
             .post("/api/token/rotate")
             .add_header(ak.clone(), av.clone())
             .await;
         assert_eq!(rotated.status_code(), 200);
-        let second = rotated.json::<serde_json::Value>()["token"]
+        let first = rotated.json::<serde_json::Value>()["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(first.starts_with("osg_pat_"));
+
+        // What is stored is a hash, not the token.
+        let stored = users::Model::find_by_pid(&ctx.db, &user.user.pid.to_string())
+            .await
+            .unwrap();
+        assert_ne!(stored.api_key, first);
+        assert!(stored.api_key.contains("$argon2"));
+
+        // The token authenticates.
+        let (tk, tv) = prepare_data::auth_header(&first);
+        assert_eq!(
+            request
+                .get("/api/whoami")
+                .add_header(tk, tv)
+                .await
+                .status_code(),
+            200
+        );
+
+        // Rotating again invalidates the previous one.
+        let second_res = request.post("/api/token/rotate").add_header(ak, av).await;
+        let second = second_res.json::<serde_json::Value>()["token"]
             .as_str()
             .unwrap()
             .to_string();
         assert_ne!(second, first);
-        assert!(second.starts_with("osg_pat_"));
 
-        let shown_again = request.get("/api/token").add_header(ak, av).await;
+        let (ok, ov) = prepare_data::auth_header(&first);
         assert_eq!(
-            shown_again.json::<serde_json::Value>()["token"]
-                .as_str()
-                .unwrap(),
-            second
+            request
+                .get("/api/whoami")
+                .add_header(ok, ov)
+                .await
+                .status_code(),
+            401
         );
     })
     .await;

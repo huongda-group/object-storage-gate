@@ -135,6 +135,7 @@ curl -X POST "$OSG_HOST/api/keys" \
 | GET | `/api/buckets` | buckets owned by the account |
 | GET | `/api/usage` | used / reserved / max bytes, object and bucket counts |
 | POST | `/api/me/password` | replace your own password, including an admin-issued temporary one |
+| POST | `/api/token/rotate` | mint a personal access token — returned **once**, stored hashed |
 
 Admin-only, all gated by `AdminCaller` on the server:
 
@@ -176,6 +177,12 @@ Two credential systems, deliberately separate:
 
 Both secret kinds are stored AES-256-GCM encrypted (`src/models/crypto.rs`),
 reversible because the gateway has to sign with them.
+
+The personal access token is the exception: it is stored as an Argon2 hash, not
+encrypted, because nothing ever needs to read it back. The token carries a
+plaintext prefix (`osg_pat_<prefix>_<secret>`) that the lookup queries; the hash
+then verifies the whole token. There is no read endpoint — a token not copied at
+rotation is gone.
 
 **Production must set `OSG_MASTER_KEY`** to a base64-encoded 32-byte key.
 Without it the code falls back to a hard-coded development key.

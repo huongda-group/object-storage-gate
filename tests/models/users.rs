@@ -358,3 +358,32 @@ async fn magic_link() {
         "Magic link expiration exceeds expected maximum expiration time"
     );
 }
+
+#[tokio::test]
+#[serial]
+async fn seed_leaves_id_sequence_past_fixtures() {
+    let boot = boot_test::<App>()
+        .await
+        .expect("Failed to boot test application");
+    seed::<App>(&boot.app_context)
+        .await
+        .expect("seed must work on every supported backend");
+
+    // src/fixtures/users.yaml has 2 rows, id 1 and 2.
+    // A new user must not touch an already-used id.
+    let fresh = users::ActiveModel {
+        email: ActiveValue::set("fresh@example.com".to_string()),
+        password: ActiveValue::set("x".to_string()),
+        name: ActiveValue::set("Fresh".to_string()),
+        ..Default::default()
+    }
+    .insert(&boot.app_context.db)
+    .await
+    .expect("insert after seed");
+
+    assert!(
+        fresh.id > 2,
+        "id sau seed phải vượt 2 dòng fixture, nhận được {}",
+        fresh.id
+    );
+}

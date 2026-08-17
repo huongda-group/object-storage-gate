@@ -1,6 +1,7 @@
-//! The account API: access keys, the management token, and read-only account
-//! state. One route tree, no version prefix. Every endpoint accepts either the
-//! console's JWT or a personal access token (PAT) — see `Caller`.
+//! The account API: access keys, the management token, and read-only account state.
+//!
+//! One route tree, no version prefix.
+//! Every endpoint accepts either the console's JWT or a personal access token (PAT) — see `Caller`.
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
 use loco_rs::prelude::*;
@@ -17,10 +18,7 @@ use crate::{
 
 /// Whoever is calling, already resolved to a user.
 ///
-/// A console session (JWT) and a service token (PAT) reach the same endpoints
-/// with the same powers: the console could already create, rotate and revoke
-/// keys over JWT, so refusing JWT on a separate management tree would have
-/// fenced off nothing.
+/// A console session (JWT) and a service token (PAT) reach the same endpoints with the same powers: the console could already create, rotate and revoke keys over JWT, so refusing JWT on a separate management tree would have fenced off nothing.
 pub struct Caller {
     pub user: users::Model,
 }

@@ -1,6 +1,5 @@
 // Ported from console-object-storage-gate/project/Buckets.dc.html.
-// TODO(slice#7): the prototype's loading skeleton (lines 63-77) and quota-error
-// banner need GET /api/buckets to drive them.
+// TODO(slice#7): the prototype's loading skeleton (lines 63-77) and quota-error banner need GET /api/buckets to drive them.
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { Header } from "../../../components/Header";

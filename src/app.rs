@@ -48,11 +48,9 @@ impl Hooks for App {
         create_app::<Self, Migrator>(mode, environment, config).await
     }
 
-    // Refuse to start production with the checked-in dev master key: every
-    // access-key secret and backend-store credential would otherwise be
-    // encrypted at rest with a publicly known key. See `models::crypto`.
-    // This hook (not `boot`) is the guard point because the loco CLI calls
-    // `create_app` directly and never goes through `Hooks::boot`.
+    // Refuse to start production with the checked-in dev master key: every access-key secret and backend-store credential would otherwise be encrypted at rest with a publicly known key.
+    // See `models::crypto`.
+    // This hook (not `boot`) is the guard point because the loco CLI calls `create_app` directly and never goes through `Hooks::boot`.
     async fn after_context(ctx: AppContext) -> Result<AppContext> {
         if ctx.environment == Environment::Production && std::env::var("OSG_MASTER_KEY").is_err() {
             return Err(Error::string(
@@ -90,8 +88,15 @@ impl Hooks for App {
         Ok(())
     }
     async fn seed(ctx: &AppContext, base: &Path) -> Result<()> {
-        db::seed::<users::ActiveModel>(&ctx.db, &base.join("users.yaml").display().to_string())
-            .await?;
-        Ok(())
+        let path = base.join("users.yaml").display().to_string();
+        // ponytail: loco's db::seed ends with reset_autoincrement, which hard-errors on MySQL — but it fires only after every row is already inserted, and InnoDB advances the AUTO_INCREMENT counter on explicit-id inserts by itself, so nothing is left undone.
+        // Swallow that one error, nothing else.
+        // Upgrade path: patch loco upstream to no-op there instead of erroring.
+        match db::seed::<users::ActiveModel>(&ctx.db, &path).await {
+            Err(Error::Message(msg)) if msg.contains("Unsupported database backend: MySQL") => {
+                Ok(())
+            }
+            other => other,
+        }
     }
 }

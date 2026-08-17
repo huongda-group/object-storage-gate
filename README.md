@@ -62,6 +62,42 @@ Console dev server with hot reload, proxying `/api` to the Rust server:
 cd frontend && pnpm dev          # http://localhost:3000
 ```
 
+## Database
+
+Three backends, all first-class:
+
+| Backend  | Minimum      | Notes                                                        |
+|----------|--------------|--------------------------------------------------------------|
+| Postgres | 14           | dev default                                                   |
+| MySQL    | **8.0.13**   | needs functional indexes for `idx_buckets_owner_name`         |
+| SQLite   | 3.35         | single writer — fits a one-node deploy                        |
+
+Pick one with `DB_TYPE` (`postgres` | `mysql` | `sqlite`); `config/*.yaml` builds the
+default URI from it. `DATABASE_URL` always wins, and production takes a full
+`DATABASE_URL` with no `DB_TYPE`. Nothing loads `.env` at runtime, so export the
+variable or prefix the command:
+
+```sh
+DB_TYPE=mysql cargo loco start
+DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test
+```
+
+Docker Compose keeps the stack (app + valkey) in `docker-compose.yml` and one overlay
+per database:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose/postgres.yml up -d
+docker compose -f docker-compose.yml -f docker-compose/mysql.yml    up -d
+docker compose -f docker-compose.yml -f docker-compose/sqlite.yml   up -d
+```
+
+Image build, required environment and publishing: `docs/docker.md`.
+
+Known ceiling: `objects.object_key` is `varchar(255)` while S3 allows keys up to 1024
+bytes. Widening it to 1024 would push the unique index `(bucket_id, object_key)` past
+InnoDB's 3072-byte limit under utf8mb4, so that change has to move the unique key onto
+a hash column (sha256 hex, 64 chars).
+
 ## API
 
 Every endpoint under `/api/*` accepts either the console's JWT or a personal
@@ -156,7 +192,7 @@ cargo loco generate model <name>      # model + migration
 cargo loco task <name>                # run a CLI task
 
 cargo test                            # all Rust tests
-cargo test --test models              # one suite
+cargo test --test mod                 # the integration suite
 cargo clippy --all-targets && cargo fmt
 ```
 
@@ -164,8 +200,9 @@ cargo clippy --all-targets && cargo fmt
 
 - **Rust** — `insta` snapshots (`cargo insta review` after intended output
   changes), `serial_test` for anything touching shared DB or quota state,
-  `rstest` for parametrized cases. Request tests boot a full app. SQLite in
-  tests, Postgres in dev.
+  `rstest` for parametrized cases. Request tests boot a full app. SQLite
+  in-memory by default; set `DATABASE_URL` to run the same suite on Postgres or
+  MySQL — CI runs all three.
 - **Console** — `cd frontend && pnpm test` (Vitest over `src/lib/`), `pnpm lint`.
 - **S3 conformance** — `tests/s3/`, pytest + boto3 run with `uv`. One black-box
   suite, two targets: point it at a real object store today to record how S3
@@ -184,6 +221,7 @@ cargo clippy --all-targets && cargo fmt
 | `docs/superpowers/specs/` | design specs, one per slice |
 | `docs/superpowers/plans/` | step-by-step implementation plans |
 | `docs/ui/admin-ui-spec.md` | console behaviour, copy and data shapes |
+| `docs/docker.md` | image layout, running each backend, publishing to Docker Hub |
 | `tests/s3/README.md` | running the conformance suite, IAM policies, safety |
 
 ## Constraints worth knowing before changing anything

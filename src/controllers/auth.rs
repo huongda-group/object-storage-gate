@@ -6,7 +6,8 @@ use crate::{
     },
     views::auth::{CurrentResponse, LoginResponse},
 };
-use loco_rs::prelude::*;
+use axum::http::StatusCode;
+use loco_rs::{controller::ErrorDetail, prelude::*};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -17,6 +18,11 @@ fn get_allow_email_domain_re() -> &'static Regex {
     EMAIL_DOMAIN_RE.get_or_init(|| {
         Regex::new(r"@example\.com$|@gmail\.com$").expect("Failed to compile regex")
     })
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SetupStatusResponse {
+    pub needs_setup: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -40,8 +46,40 @@ pub struct ResendVerificationParams {
     pub email: String,
 }
 
-/// Register function creates a new user with the given parameters and sends a
-/// welcome email to the user
+/// Reports whether this instance still has no user, i.e. the console should send the visitor to the first-run admin setup page.
+/// Public on purpose: the setup page is reachable before any credential exists.
+#[debug_handler]
+async fn setup_status(State(ctx): State<AppContext>) -> Result<Response> {
+    format::json(SetupStatusResponse {
+        needs_setup: !users::Model::any_exists(&ctx.db).await?,
+    })
+}
+
+/// Creates the first admin of a fresh instance and logs it straight in.
+/// Refused with 403 once any user exists.
+#[debug_handler]
+async fn setup_admin(
+    State(ctx): State<AppContext>,
+    Json(params): Json<RegisterParams>,
+) -> Result<Response> {
+    if users::Model::any_exists(&ctx.db).await? {
+        return Err(Error::CustomError(
+            StatusCode::FORBIDDEN,
+            ErrorDetail::new("setup_done", "setup has already been completed"),
+        ));
+    }
+
+    let user = users::Model::create_first_admin(&ctx.db, &params).await?;
+
+    let jwt_secret = ctx.config.get_jwt_config()?;
+    let token = user
+        .generate_jwt(&jwt_secret.secret, jwt_secret.expiration)
+        .or_else(|_| unauthorized("unauthorized!"))?;
+
+    format::json(LoginResponse::new(&user, &token))
+}
+
+/// Register function creates a new user with the given parameters and sends a welcome email to the user
 #[debug_handler]
 async fn register(
     State(ctx): State<AppContext>,
@@ -71,8 +109,8 @@ async fn register(
     format::json(())
 }
 
-/// Verify register user. if the user not verified his email, he can't login to
-/// the system.
+/// Verify register user.
+/// if the user not verified his email, he can't login to the system.
 #[debug_handler]
 async fn verify(State(ctx): State<AppContext>, Path(token): Path<String>) -> Result<Response> {
     let Ok(user) = users::Model::find_by_verification_token(&ctx.db, &token).await else {
@@ -90,18 +128,16 @@ async fn verify(State(ctx): State<AppContext>, Path(token): Path<String>) -> Res
     format::json(())
 }
 
-/// In case the user forgot his password  this endpoints generate a forgot token
-/// and send email to the user. In case the email not found in our DB, we are
-/// returning a valid request for for security reasons (not exposing users DB
-/// list).
+/// In case the user forgot his password  this endpoints generate a forgot token and send email to the user.
+/// In case the email not found in our DB, we are returning a valid request for for security reasons (not exposing users DB list).
 #[debug_handler]
 async fn forgot(
     State(ctx): State<AppContext>,
     Json(params): Json<ForgotParams>,
 ) -> Result<Response> {
     let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
-        // we don't want to expose our users email. if the email is invalid we still
-        // returning success to the caller
+        // we don't want to expose our users email.
+        // if the email is invalid we still returning success to the caller
         return format::json(());
     };
 
@@ -119,8 +155,8 @@ async fn forgot(
 #[debug_handler]
 async fn reset(State(ctx): State<AppContext>, Json(params): Json<ResetParams>) -> Result<Response> {
     let Ok(user) = users::Model::find_by_reset_token(&ctx.db, &params.token).await else {
-        // we don't want to expose our users email. if the email is invalid we still
-        // returning success to the caller
+        // we don't want to expose our users email.
+        // if the email is invalid we still returning success to the caller
         tracing::info!("reset token not found");
 
         return format::json(());
@@ -192,8 +228,8 @@ async fn magic_link(
     }
 
     let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
-        // we don't want to expose our users email. if the email is invalid we still
-        // returning success to the caller
+        // we don't want to expose our users email.
+        // if the email is invalid we still returning success to the caller
         tracing::debug!(email = params.email, "user not found by email");
         return format::empty_json();
     };
@@ -210,8 +246,8 @@ async fn magic_link_verify(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let Ok(user) = users::Model::find_by_magic_token(&ctx.db, &token).await else {
-        // we don't want to expose our users email. if the email is invalid we still
-        // returning success to the caller
+        // we don't want to expose our users email.
+        // if the email is invalid we still returning success to the caller
         return unauthorized("unauthorized!");
     };
 
@@ -261,6 +297,8 @@ async fn resend_verification_email(
 pub fn routes() -> Routes {
     Routes::new()
         .prefix("/api/auth")
+        .add("/setup", get(setup_status))
+        .add("/setup", post(setup_admin))
         .add("/register", post(register))
         .add("/verify/{token}", get(verify))
         .add("/login", post(login))

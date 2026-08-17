@@ -1,0 +1,27 @@
+# Overlay Postgres. Dùng chung với docker-compose.yml ở thư mục gốc:
+#   docker compose -f docker-compose.yml -f docker-compose/postgres.yml up -d
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: loco
+      POSTGRES_PASSWORD: loco
+      POSTGRES_DB: object-storage-gate_production
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loco"]
+      interval: 5s
+      retries: 10
+
+  app:
+    environment:
+      DATABASE_URL: postgres://loco:loco@db:5432/object-storage-gate_production
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

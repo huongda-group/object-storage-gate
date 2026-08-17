@@ -72,8 +72,16 @@ mailer:
 
 # Database Configuration
 database:
-  # Database connection URI
+  # Database connection URI. Chọn theo DB_TYPE (postgres|mysql|sqlite);
+  # DATABASE_URL nếu đặt sẽ thắng.
+{%- set db_type = get_env(name="DB_TYPE", default="postgres") %}
+{%- if db_type == "sqlite" %}
+  uri: {{ get_env(name="DATABASE_URL", default="sqlite://data/osg_development.sqlite?mode=rwc") }}
+{%- elif db_type == "mysql" %}
+  uri: {{ get_env(name="DATABASE_URL", default="mysql://loco:loco@localhost:3306/object_storage_gate_development") }}
+{%- else %}
   uri: {{ get_env(name="DATABASE_URL", default="postgres://loco:loco@localhost:5432/object-storage-gate_development") }}
+{%- endif %}
   # When enabled, the sql query will be logged.
   enable_logging: false
   # Set the timeout duration when acquiring a connection.

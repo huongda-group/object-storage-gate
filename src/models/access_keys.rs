@@ -10,8 +10,8 @@ use super::crypto;
 pub const KEY_ACTIVE: &str = "active";
 pub const KEY_DISABLED: &str = "disabled";
 pub const KEY_REVOKED: &str = "revoked";
-/// Never stored — derived from `expires_at`. The console's fourth status pill
-/// ("Hết hạn") comes from `effective_status()`, so the UI never re-derives it.
+/// Never stored — derived from `expires_at`.
+/// The console's fourth status pill ("Hết hạn") comes from `effective_status()`, so the UI never re-derives it.
 pub const KEY_EXPIRED: &str = "expired";
 
 pub const ACTION_READ: &str = "read";
@@ -79,12 +79,10 @@ pub fn validate_actions(actions: &[String]) -> ModelResult<()> {
     Ok(())
 }
 
-/// Prefix decides what a key can read and write, so this is a trust boundary:
-/// every write path goes through here, not through the controller.
+/// Prefix decides what a key can read and write, so this is a trust boundary: every write path goes through here, not through the controller.
 ///
 /// # Errors
-/// Returns an error when a prefix is empty, absolute, contains `..`, is too
-/// long, or when there are too many of them.
+/// Returns an error when a prefix is empty, absolute, contains `..`, is too long, or when there are too many of them.
 pub fn validate_prefixes(prefixes: &[String]) -> ModelResult<()> {
     if prefixes.len() > MAX_PREFIXES {
         return Err(invalid("at most 20 prefixes per key"));
@@ -123,9 +121,8 @@ impl ActiveModelBehavior for super::_entities::access_keys::ActiveModel {
 }
 
 impl Model {
-    /// Create an access key for a user with its policy. Returns the model plus
-    /// the plaintext secret ONCE (stored only encrypted; decryptable internally
-    /// for SigV4).
+    /// Create an access key for a user with its policy.
+    /// Returns the model plus the plaintext secret ONCE (stored only encrypted; decryptable internally for `SigV4`).
     ///
     /// # Errors
     /// Returns an error on validation failure or DB failure.
@@ -180,8 +177,7 @@ impl Model {
         Ok((model, secret))
     }
 
-    /// All keys of a user with their policy, in 3 queries — never one query
-    /// per key.
+    /// All keys of a user with their policy, in 3 queries — never one query per key.
     ///
     /// # Errors
     /// Returns an error on DB failure.
@@ -223,12 +219,10 @@ impl Model {
             .collect())
     }
 
-    /// Ownership is part of the query, not a check after loading: a key of
-    /// another user is indistinguishable from a key that does not exist.
+    /// Ownership is part of the query, not a check after loading: a key of another user is indistinguishable from a key that does not exist.
     ///
     /// # Errors
-    /// Returns `EntityNotFound` when the pid is malformed, missing, or owned
-    /// by someone else.
+    /// Returns `EntityNotFound` when the pid is malformed, missing, or owned by someone else.
     pub async fn find_by_pid_for_user(
         db: &DatabaseConnection,
         pid: &str,
@@ -256,7 +250,7 @@ impl Model {
             .ok_or_else(|| ModelError::EntityNotFound)
     }
 
-    /// Decrypt the stored secret for SigV4 verification.
+    /// Decrypt the stored secret for `SigV4` verification.
     ///
     /// # Errors
     /// Returns an error if decryption fails.
@@ -275,9 +269,8 @@ impl Model {
         self.expires_at.is_some_and(|exp| exp <= Utc::now())
     }
 
-    /// Status for the API/console: the stored one, unless the key lapsed while
-    /// still marked active. Revoked and disabled keep their own status — a
-    /// revoked key is not "merely expired".
+    /// Status for the API/console: the stored one, unless the key lapsed while still marked active.
+    /// Revoked and disabled keep their own status — a revoked key is not "merely expired".
     #[must_use]
     pub fn effective_status(&self) -> &str {
         if self.status == KEY_ACTIVE && self.is_expired() {
@@ -295,13 +288,11 @@ impl Model {
             .map(|exp| (exp.with_timezone(&Utc) - Utc::now()).num_days().max(0))
     }
 
-    /// Move a key between `active` and `disabled`. `revoked` is terminal: a
-    /// revoked key is never brought back, because callers may already treat it
-    /// as gone.
+    /// Move a key between `active` and `disabled`.
+    /// `revoked` is terminal: a revoked key is never brought back, because callers may already treat it as gone.
     ///
     /// # Errors
-    /// Returns an error for an unknown status, for any change to a revoked
-    /// key, or on DB failure.
+    /// Returns an error for an unknown status, for any change to a revoked key, or on DB failure.
     pub async fn set_status(self, db: &DatabaseConnection, status: &str) -> ModelResult<Self> {
         if self.status == KEY_REVOKED {
             return Err(invalid("a revoked key cannot change status"));
@@ -325,8 +316,7 @@ impl Model {
     }
 
     /// Issue a replacement key with the same policy and disable this one.
-    /// The old key is disabled rather than revoked so a running app has a
-    /// window to swap its config.
+    /// The old key is disabled rather than revoked so a running app has a window to swap its config.
     ///
     /// # Errors
     /// Returns an error when the key is revoked, or on DB failure.
@@ -334,8 +324,7 @@ impl Model {
         if self.status == KEY_REVOKED {
             return Err(invalid("a revoked key cannot be rotated"));
         }
-        // Copying a lapsed `expires_at` onto the new key would fail validation
-        // with a confusing message; say what is actually wrong instead.
+        // Copying a lapsed `expires_at` onto the new key would fail validation with a confusing message; say what is actually wrong instead.
         if self.is_expired() {
             return Err(invalid(
                 "an expired key cannot be rotated; create a new key instead",
@@ -356,8 +345,8 @@ impl Model {
         Ok((new_key, secret))
     }
 
-    /// Replace the key's permissions. Validation runs before the transaction
-    /// opens, so a rejected update never deletes the current rows.
+    /// Replace the key's permissions.
+    /// Validation runs before the transaction opens, so a rejected update never deletes the current rows.
     ///
     /// # Errors
     /// Returns an error on unknown action or DB failure.
@@ -385,7 +374,8 @@ impl Model {
         Ok(())
     }
 
-    /// Replace the key's prefixes. Same ordering rule as `set_permissions`.
+    /// Replace the key's prefixes.
+    /// Same ordering rule as `set_permissions`.
     ///
     /// # Errors
     /// Returns an error on an invalid prefix or DB failure.

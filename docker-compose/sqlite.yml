@@ -1,0 +1,12 @@
+# Overlay SQLite — không có service database, DB nằm trong volume của app.
+# Chỉ hợp deploy một node: SQLite có đúng một writer.
+#   docker compose -f docker-compose.yml -f docker-compose/sqlite.yml up -d
+services:
+  app:
+    environment:
+      DATABASE_URL: sqlite:///app/data/osg.sqlite?mode=rwc
+    volumes:
+      - sqlitedata:/app/data
+
+volumes:
+  sqlitedata:

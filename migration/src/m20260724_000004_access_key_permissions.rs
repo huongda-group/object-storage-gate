@@ -1,6 +1,7 @@
 use loco_rs::schema::*;
 use sea_orm_migration::prelude::*;
-use sea_orm_migration::sea_orm::ConnectionTrait;
+
+const IDX_AKP_KEY_ACTION: &str = "idx_akp_key_action";
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -15,12 +16,22 @@ impl MigrationTrait for Migration {
             &[("access_keys", "")],
         )
         .await?;
-        m.get_connection()
-            .execute_unprepared(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_akp_key_action \
-                 ON access_key_permissions (access_key_id, action)",
+        // `has_index` instead of `IF NOT EXISTS`: MySQL has no such syntax for indexes.
+        if !m
+            .has_index("access_key_permissions", IDX_AKP_KEY_ACTION)
+            .await?
+        {
+            m.create_index(
+                Index::create()
+                    .name(IDX_AKP_KEY_ACTION)
+                    .table(Alias::new("access_key_permissions"))
+                    .col(Alias::new("access_key_id"))
+                    .col(Alias::new("action"))
+                    .unique()
+                    .to_owned(),
             )
             .await?;
+        }
         Ok(())
     }
 

@@ -1,6 +1,5 @@
 // Ported from console-object-storage-gate/project/Admin Buckets.dc.html.
-// The prototype's pool form has no owner picker (the logic's OWNERS list is unused
-// there), so this port follows the rendered form: name, quota, provider, public link.
+// The prototype's pool form has no owner picker (the logic's OWNERS list is unused there), so this port follows the rendered form: name, quota, provider, public link.
 import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { Header } from "../../../components/Header";

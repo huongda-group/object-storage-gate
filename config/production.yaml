@@ -1,0 +1,50 @@
+# All values come from the environment — safe to commit, no secrets inline.
+logger:
+  enable: true
+  pretty_backtrace: false
+  level: {{ get_env(name="LOG_LEVEL", default="info") }}
+  format: json
+
+server:
+  port: {{ get_env(name="PORT", default="5150") }}
+  binding: 0.0.0.0
+  host: {{ get_env(name="SERVER_HOST", default="http://localhost") }}
+  middlewares:
+    fallback:
+      enable: false
+    static:
+      enable: true
+      must_exist: true
+      precompressed: false
+      folder:
+        uri: "/"
+        path: "frontend/dist"
+      fallback: "frontend/dist/index.html"
+
+workers:
+  mode: BackgroundAsync
+
+mailer:
+  smtp:
+    enable: {{ get_env(name="SMTP_ENABLE", default="false") }}
+    host: {{ get_env(name="SMTP_HOST", default="localhost") }}
+    port: {{ get_env(name="SMTP_PORT", default="587") }}
+    secure: {{ get_env(name="SMTP_SECURE", default="true") }}
+
+database:
+  # Bắt buộc. Scheme trong URI (postgres:// | mysql:// | sqlite://) quyết định backend.
+  # MySQL yêu cầu >= 8.0.13. SQLite chỉ hợp deploy một node (một writer duy nhất).
+  uri: {{ get_env(name="DATABASE_URL") }}
+  enable_logging: false
+  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="500") }}
+  idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="500") }}
+  min_connections: {{ get_env(name="DB_MIN_CONNECTIONS", default="1") }}
+  max_connections: {{ get_env(name="DB_MAX_CONNECTIONS", default="10") }}
+  auto_migrate: true
+  dangerously_truncate: false
+  dangerously_recreate: false
+
+auth:
+  jwt:
+    secret: {{ get_env(name="JWT_SECRET") }}
+    expiration: 604800

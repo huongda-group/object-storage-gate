@@ -69,12 +69,20 @@ mailer:
 
 # Database Configuration
 database:
-  # Database connection URI
+  # Database connection URI. Test mặc định chạy SQLite in-memory.
+{%- set db_type = get_env(name="DB_TYPE", default="sqlite") %}
+{%- if db_type == "mysql" %}
+  uri: {{ get_env(name="DATABASE_URL", default="mysql://loco:loco@localhost:3306/object_storage_gate_test") }}
+{%- elif db_type == "postgres" %}
+  uri: {{ get_env(name="DATABASE_URL", default="postgres://loco:loco@localhost:5432/object-storage-gate_test") }}
+{%- else %}
   uri: "{{ get_env(name='DATABASE_URL', default='sqlite::memory:') }}"
+{%- endif %}
   # When enabled, the sql query will be logged.
   enable_logging: false
   # Set the timeout duration when acquiring a connection.
-  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="500") }}
+  # 5s, not the starter's 500ms: every test boots its own app, and on a loaded CI runner the first connect to the Postgres service container overruns 500ms and the boot panics with `PoolTimedOut`.
+  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="5000") }}
   # Set the idle duration before closing a connection.
   idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="500") }}
   # Minimum number of connections for a pool.

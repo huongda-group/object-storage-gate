@@ -1,6 +1,7 @@
 use loco_rs::schema::*;
 use sea_orm_migration::prelude::*;
-use sea_orm_migration::sea_orm::ConnectionTrait;
+
+const IDX_OBJECTS_BUCKET_KEY: &str = "idx_objects_bucket_key";
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -25,12 +26,19 @@ impl MigrationTrait for Migration {
             &[("buckets", "")],
         )
         .await?;
-        m.get_connection()
-            .execute_unprepared(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_objects_bucket_key \
-                 ON objects (bucket_id, object_key)",
+        // `has_index` instead of `IF NOT EXISTS`: MySQL has no such syntax for indexes.
+        if !m.has_index("objects", IDX_OBJECTS_BUCKET_KEY).await? {
+            m.create_index(
+                Index::create()
+                    .name(IDX_OBJECTS_BUCKET_KEY)
+                    .table(Alias::new("objects"))
+                    .col(Alias::new("bucket_id"))
+                    .col(Alias::new("object_key"))
+                    .unique()
+                    .to_owned(),
             )
             .await?;
+        }
         Ok(())
     }
 

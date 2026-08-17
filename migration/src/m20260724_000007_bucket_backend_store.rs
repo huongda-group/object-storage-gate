@@ -1,9 +1,7 @@
 use loco_rs::schema::*;
 use sea_orm_migration::prelude::*;
 
-/// Backend-store config per bucket, as the admin Pool form edits it
-/// (`console-object-storage-gate/project/Admin Buckets.dc.html`): which object
-/// store this bucket proxies to, and whether its objects are publicly readable.
+/// Backend-store config per bucket, as the admin Pool form edits it (`console-object-storage-gate/project/Admin Buckets.dc.html`): which object store this bucket proxies to, and whether its objects are publicly readable.
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 

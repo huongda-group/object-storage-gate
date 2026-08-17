@@ -1,5 +1,4 @@
-// Header, avatar menu and logout confirm from
-// console-object-storage-gate/project/Dashboard.dc.html (lines 44-62, 200-211).
+// Header, avatar menu and logout confirm from console-object-storage-gate/project/Dashboard.dc.html (lines 44-62, 200-211).
 import { Link } from "@tanstack/react-router";
 import type React from "react";
 import { useState } from "react";

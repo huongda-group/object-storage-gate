@@ -6,15 +6,11 @@ use super::crypto;
 
 pub use super::_entities::buckets::{ActiveModel, Column, Entity, Model};
 
-// Note on the generated entity: `name` carries `#[sea_orm(unique)]` even though
-// names are only unique per owner. sea-orm-codegen sees the unique index
-// `idx_buckets_owner_name ON buckets (COALESCE(user_id, 0), name)` and can only
-// resolve its one real column. The DB constraint is the correct one; the
-// attribute is codegen metadata (used when generating schema *from* entities,
-// which this project never does — migrations own the schema).
+// Note on the generated entity: `name` carries `#[sea_orm(unique)]` even though names are only unique per owner.
+// sea-orm-codegen sees the unique index `idx_buckets_owner_name ON buckets (COALESCE(user_id, 0), name)` and can only resolve its one real column.
+// The DB constraint is the correct one; the attribute is codegen metadata (used when generating schema *from* entities, which this project never does — migrations own the schema).
 
-/// Backend store a bucket proxies to — the Pool form's provider dropdown
-/// (`console-object-storage-gate/project/Admin Buckets.dc.html` PROVIDERS()).
+/// Backend store a bucket proxies to — the Pool form's provider dropdown (`console-object-storage-gate/project/Admin Buckets.dc.html` `PROVIDERS()`).
 pub const PROVIDER_INTERNAL: &str = "internal";
 pub const PROVIDER_AWS: &str = "aws";
 pub const PROVIDER_R2: &str = "r2";
@@ -33,8 +29,8 @@ pub const PROVIDERS: &[&str] = &[
     PROVIDER_CUSTOM,
 ];
 
-/// Store config as the admin form submits it. `access_secret` is plaintext on the
-/// way in and never stored that way.
+/// Store config as the admin form submits it.
+/// `access_secret` is plaintext on the way in and never stored that way.
 #[derive(Debug, Clone, Default)]
 pub struct StoreParams {
     pub provider: String,
@@ -82,8 +78,8 @@ impl Model {
         .await?)
     }
 
-    /// Create a gateway-wide pool with no owner — the admin Pool screen's
-    /// "hệ thống" rows. Its bytes count against no user's quota.
+    /// Create a gateway-wide pool with no owner — the admin Pool screen's "hệ thống" rows.
+    /// Its bytes count against no user's quota.
     ///
     /// # Errors
     /// Returns an error on DB failure (incl. duplicate system pool name).
@@ -102,8 +98,8 @@ impl Model {
         .await?)
     }
 
-    /// Buckets owned by a user. System pool buckets (`user_id IS NULL`) are
-    /// not part of anyone's account listing.
+    /// Buckets owned by a user.
+    /// System pool buckets (`user_id IS NULL`) are not part of anyone's account listing.
     ///
     /// # Errors
     /// Returns an error on DB failure.
@@ -142,8 +138,8 @@ impl Model {
             .await?)
     }
 
-    /// Replace this bucket's backend-store config. The secret is encrypted here;
-    /// pass `None` to keep the stored one.
+    /// Replace this bucket's backend-store config.
+    /// The secret is encrypted here; pass `None` to keep the stored one.
     ///
     /// # Errors
     /// Returns an error on an unknown provider or DB failure.
@@ -184,19 +180,19 @@ impl Model {
     }
 
     #[must_use]
-    pub fn is_unlimited(&self) -> bool {
+    pub const fn is_unlimited(&self) -> bool {
         self.max_bytes == 0
     }
 
     /// A pool with no owner: gateway-wide, outside every user's quota.
     #[must_use]
-    pub fn is_system(&self) -> bool {
+    pub const fn is_system(&self) -> bool {
         self.user_id.is_none()
     }
 
     /// Objects are reachable over a public URL without a signed request.
     #[must_use]
-    pub fn is_public(&self) -> bool {
+    pub const fn is_public(&self) -> bool {
         self.public_enabled
     }
 }

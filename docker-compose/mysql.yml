@@ -1,0 +1,28 @@
+# Overlay MySQL (>= 8.0.13 — cần functional index cho idx_buckets_owner_name).
+#   docker compose -f docker-compose.yml -f docker-compose/mysql.yml up -d
+services:
+  db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: loco
+      MYSQL_DATABASE: object_storage_gate_production
+      MYSQL_USER: loco
+      MYSQL_PASSWORD: loco
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uloco", "-ploco"]
+      interval: 5s
+      retries: 20
+
+  app:
+    environment:
+      DATABASE_URL: mysql://loco:loco@db:3306/object_storage_gate_production
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  mysqldata:

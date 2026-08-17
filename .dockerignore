@@ -1,0 +1,11 @@
+target/
+frontend/dist/
+frontend/node_modules/
+console-object-storage-gate/
+.git/
+.idea/
+docs/
+examples/
+tests/s3/.venv/
+*.sqlite
+*.sqlite-*

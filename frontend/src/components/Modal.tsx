@@ -1,6 +1,5 @@
 // Overlay + panel from console-object-storage-gate/project/Dashboard.dc.html (lines 200-211).
-// Native <dialog> so Escape, focus trapping and inertness come from the platform;
-// the prototype's overlay colour lives on dialog::backdrop in styles.css.
+// Native <dialog> so Escape, focus trapping and inertness come from the platform; the prototype's overlay colour lives on dialog::backdrop in styles.css.
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 

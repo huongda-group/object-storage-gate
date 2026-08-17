@@ -1,7 +1,5 @@
 // Ported from console-object-storage-gate/project/Dashboard.dc.html.
-// TODO(slice#7): the prototype's loading skeleton (line 113) and quota-fetch
-// error banner (lines 65-73) need GET /api/me/summary to drive them; port them
-// with the API call.
+// TODO(slice#7): the prototype's loading skeleton (line 113) and quota-fetch error banner (lines 65-73) need GET /api/me/summary to drive them; port them with the API call.
 import { Link, createFileRoute } from "@tanstack/react-router";
 import type React from "react";
 import { useState } from "react";

@@ -61,7 +61,7 @@ impl UsageResponse {
             reserved_bytes: user.reserved_bytes,
             max_bytes: user.max_bytes,
             object_count: buckets.iter().map(|b| b.object_count).sum(),
-            bucket_count: buckets.len() as i64,
+            bucket_count: i64::try_from(buckets.len()).unwrap_or(i64::MAX),
         }
     }
 }

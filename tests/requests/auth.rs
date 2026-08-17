@@ -6,8 +6,7 @@ use serial_test::serial;
 
 use super::prepare_data;
 
-// TODO: see how to dedup / extract this to app-local test utils
-// not to framework, because that would require a runtime dep on insta
+// TODO: see how to dedup / extract this to app-local test utils not to framework, because that would require a runtime dep on insta
 macro_rules! configure_insta {
     ($($expr:expr),*) => {
         let mut settings = insta::Settings::clone_current();
@@ -496,6 +495,64 @@ async fn cannot_resend_email_if_already_verified() {
         assert_eq!(
             deliveries.count, 1,
             "Only the original welcome email should be sent"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn first_run_setup_creates_admin() {
+    request::<App, _, _>(|request, ctx| async move {
+        let status = request.get("/api/auth/setup").await;
+        assert_eq!(status.status_code(), 200);
+        assert_eq!(
+            status.json::<serde_json::Value>()["needs_setup"],
+            true,
+            "an empty database needs setup"
+        );
+
+        let payload = serde_json::json!({
+            "name": "root",
+            "email": "root@loco.com",
+            "password": "12341234"
+        });
+        let response = request.post("/api/auth/setup").json(&payload).await;
+        assert_eq!(response.status_code(), 200, "Setup request should succeed");
+        assert!(
+            !response.json::<serde_json::Value>()["token"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty(),
+            "setup should return a usable token"
+        );
+
+        let user = users::Model::find_by_email(&ctx.db, "root@loco.com")
+            .await
+            .expect("admin user should exist");
+        assert_eq!(user.role, users::ROLE_ADMIN);
+        assert!(
+            user.email_verified_at.is_some(),
+            "the first admin is verified without an email round-trip"
+        );
+        assert_eq!(
+            ctx.mailer.unwrap().deliveries().count,
+            0,
+            "setup should not send any email"
+        );
+
+        let status = request.get("/api/auth/setup").await;
+        assert_eq!(
+            status.json::<serde_json::Value>()["needs_setup"],
+            false,
+            "setup is done once a user exists"
+        );
+
+        let again = request.post("/api/auth/setup").json(&payload).await;
+        assert_eq!(
+            again.status_code(),
+            403,
+            "setup should be closed once a user exists"
         );
     })
     .await;

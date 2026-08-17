@@ -1,0 +1,33 @@
+# Base stack: app + valkey. Không có database — chọn một overlay trong docker-compose/:
+#
+#   docker compose -f docker-compose.yml -f docker-compose/postgres.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose/mysql.yml    up -d
+#   docker compose -f docker-compose.yml -f docker-compose/sqlite.yml   up -d
+#
+# Hoặc đặt COMPOSE_FILE trong .env rồi chạy `docker compose up -d` trống.
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkeydata:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    ports:
+      - "5150:5150"
+    environment:
+      # DATABASE_URL do overlay database cung cấp.
+      REDIS_URL: redis://valkey:6379
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      OSG_MASTER_KEY: ${OSG_MASTER_KEY:?set OSG_MASTER_KEY (base64 of 32 random bytes)}
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+volumes:
+  valkeydata:

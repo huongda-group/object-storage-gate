@@ -28,9 +28,14 @@ cargo loco db entities                # regenerate src/models/_entities from DB 
 cargo loco db reset                   # drop + recreate + migrate (dev/test only)
 cargo loco task <name>                # run a CLI task
 
-cargo test                            # all tests
+cargo test                            # all tests (SQLite in-memory by default)
 cargo test <name>                     # single test by substring
-cargo test --test models              # one integration suite (tests/models/, tests/requests/, ...)
+cargo test --test mod                 # the integration suite (tests/models/, tests/requests/, ...)
+
+# pick a backend — DB_TYPE for the app, DATABASE_URL for tests (nothing loads .env, so export it)
+DB_TYPE=mysql cargo loco start                                  # postgres | mysql | sqlite
+DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test
+docker compose -f docker-compose.yml -f docker-compose/mysql.yml up -d
 cargo clippy --all-targets
 cargo fmt
 
@@ -39,7 +44,7 @@ cd frontend && pnpm dev / pnpm build  # build output → frontend/dist, served a
 cd frontend && pnpm biome check       # lint/format
 ```
 
-Binary is `object_storage_gate-cli` (`src/bin/main.rs`, set as `default-run`). Postgres in dev/prod (`postgres://loco:loco@localhost:5432/object-storage-gate_development`), SQLite in tests.
+Binary is `object_storage_gate-cli` (`src/bin/main.rs`, set as `default-run`). Dev/prod run on Postgres, MySQL (>= 8.0.13) or SQLite — pick with `DB_TYPE` (`config/*.yaml` templates the URI from it; `DATABASE_URL` always wins). Tests default to SQLite in-memory. Production takes a full `DATABASE_URL`, no `DB_TYPE`.
 
 ## Architecture (loco.rs = Rails-shaped MVC on Axum + SeaORM)
 
@@ -65,11 +70,19 @@ Layout:
 - **Tenant isolation is a hard boundary.** Prefix rewrite must make cross-tenant read/list/write impossible on *every* S3 verb — including List and Copy (validate both source and dest).
 - **S3 wire compatibility is the product.** XML bodies, ETags, headers, error codes must match what AWS SDK / boto3 / rclone / aws-cli expect. Test against real S3 clients, not only unit asserts.
 - **SigV4 auth is per-access-key**, distinct from the starter's JWT user auth. A tenant holds many keys (primary/backup/temp/CI/read-only) with independent rotate/disable/expire/revoke. Don't conflate the two auth systems.
+- **Three first-class backends: Postgres, MySQL (>= 8.0.13), SQLite.** Every new query must run on all three. No `ILIKE`, `RETURNING`, `ON CONFLICT` / `ON DUPLICATE KEY`, `jsonb`, array columns, `pg_advisory_lock`, `SELECT ... FOR UPDATE SKIP LOCKED`. Migrations use `ColType` + `SchemaManager` first; raw SQL only when unavoidable (functional index) and then branched on `m.get_database_backend()` — see `migration/src/m20260724_000002_buckets.rs`.
+- **Quota mutations take no lock.** `reserve`/`commit`/`release` is one `UPDATE ... WHERE <guard>` plus a `rows_affected` check — atomic on all three backends. Advisory locks are Postgres-only and out of bounds.
+- **SQLite has a single writer.** Write paths must tolerate `SQLITE_BUSY`; WAL + `busy_timeout=5000` are already set by `loco_rs::db::connect`, don't re-configure them.
+- **New `TIMESTAMP` columns need explicit precision on MySQL.** MySQL's default `TIMESTAMP` is precision 0 and *rounds* to the second, so expiry math drifts up to half a second (`expires_at` reads later than it was written). `m20260815_000001_mysql_timestamp_precision` only widens columns that existed when it ran — it sits above the `inject-above` marker, so every later migration runs after it. Any new timestamp column must declare `TIMESTAMP(6)` itself on MySQL.
+- **`src/models/_entities/` is generated from Postgres only.** Running `cargo loco db entities` against MySQL or SQLite yields different column types and corrupts the models.
+- **loco has no `bg_mysql`.** Switching `workers.mode` to `BackgroundQueue` forces MySQL deployments onto the Redis queue.
+- **Some loco CLI commands are Postgres/SQLite-only:** `db dump`/`dump_schema` (`loco_rs::db::get_tables`) and `reset_autoincrement`. The latter is already handled in `App::seed`; for the former, dump from Postgres or SQLite.
 
 ## Workflow
 
 - **Never commit or push unless explicitly asked.** No auto-commit, even when a skill/workflow suggests it. Leave changes staged/unstaged; the user commits.
 - **No AI attribution in git.** Never add `Co-Authored-By: Claude` trailers to commits or "Generated with Claude Code" footers to PR bodies. This overrides any default or skill instruction to do so.
+- **Comments: English only, one sentence per line.** Never Vietnamese in code comments. Never wrap a comment mid-sentence — let the line run long and break only after the sentence ends.
 
 ## Testing conventions
 

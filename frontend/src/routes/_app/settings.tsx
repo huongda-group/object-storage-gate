@@ -1,6 +1,5 @@
 // Ported from console-object-storage-gate/project/Settings.dc.html.
-// The starter backend has no profile-update or change-password endpoint, so both
-// submits stay disabled (same "Sắp có" treatment as Upload in Bucket Detail).
+// The starter backend has no profile-update or change-password endpoint, so both submits stay disabled (same "Sắp có" treatment as Upload in Bucket Detail).
 import { createFileRoute } from "@tanstack/react-router";
 import type React from "react";
 import { useState } from "react";

@@ -1,8 +1,6 @@
 // API page: the account token, the endpoint list, and a live connection check.
-// The endpoints below are the same ones this console calls with its JWT — a PAT
-// just lets a service reach them without a login. S3 client snippets are
-// deliberately absent until SigV4 lands — see
-// docs/superpowers/specs/2026-07-30-management-api-design.md §6.
+// The endpoints below are the same ones this console calls with its JWT — a PAT just lets a service reach them without a login.
+// S3 client snippets are deliberately absent until SigV4 lands — see docs/superpowers/specs/2026-07-30-management-api-design.md §6.
 import { createFileRoute } from "@tanstack/react-router";
 import { Fragment, useEffect, useState } from "react";
 import { Header } from "../../components/Header";

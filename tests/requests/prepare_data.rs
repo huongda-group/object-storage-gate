@@ -51,8 +51,6 @@ pub async fn init_user_login(request: &TestServer, ctx: &AppContext) -> LoggedIn
 }
 
 /// An admin account, logged in. Used by the tests that exercise the admin tree.
-// The admin tree lands in task 4; this helper is written here because it belongs with its siblings.
-#[allow(dead_code)]
 pub async fn init_admin_login(request: &TestServer, ctx: &AppContext) -> LoggedInUser {
     let user = create_user(
         ctx,

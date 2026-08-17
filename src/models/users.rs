@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use loco_rs::{auth::jwt, hash, prelude::*};
+use sea_orm::{PaginatorTrait, QueryOrder};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use uuid::Uuid;
@@ -42,6 +43,28 @@ pub fn validate_password(password: &str) -> ModelResult<()> {
         return Err(ModelError::msg("password must be at most 256 characters"));
     }
     Ok(())
+}
+
+/// Validates a role string against the two roles the system knows.
+///
+/// # Errors
+///
+/// Returns a message error for anything else.
+pub fn validate_role(role: &str) -> ModelResult<()> {
+    if role == ROLE_ADMIN || role == ROLE_USER {
+        return Ok(());
+    }
+    Err(ModelError::msg("role must be 'admin' or 'user'"))
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CreateUserParams {
+    pub email: String,
+    pub name: String,
+    pub password: String,
+    pub role: String,
+    /// Required on purpose: `0` means unlimited, and unlimited must be a decision, never a default.
+    pub max_bytes: i64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -216,6 +239,83 @@ impl Model {
         txn.commit().await?;
 
         Ok(user)
+    }
+
+    /// Creates a user on an admin's behalf, with a temporary password the user must replace at first login.
+    ///
+    /// # Errors
+    ///
+    /// When the email is taken, the role or password is invalid, or the DB write fails
+    pub async fn create_by_admin(
+        db: &DatabaseConnection,
+        params: &CreateUserParams,
+    ) -> ModelResult<Self> {
+        validate_role(&params.role)?;
+        validate_password(&params.password)?;
+        if params.max_bytes < 0 {
+            return Err(ModelError::msg("max_bytes must not be negative"));
+        }
+
+        let txn = db.begin().await?;
+
+        if users::Entity::find()
+            .filter(
+                model::query::condition()
+                    .eq(users::Column::Email, &params.email)
+                    .build(),
+            )
+            .one(&txn)
+            .await?
+            .is_some()
+        {
+            return Err(ModelError::EntityAlreadyExists {});
+        }
+
+        let password_hash =
+            hash::hash_password(&params.password).map_err(|e| ModelError::Any(e.into()))?;
+        let user = users::ActiveModel {
+            email: ActiveValue::set(params.email.clone()),
+            password: ActiveValue::set(password_hash),
+            name: ActiveValue::set(params.name.clone()),
+            role: ActiveValue::set(params.role.clone()),
+            max_bytes: ActiveValue::set(params.max_bytes),
+            must_change_password: ActiveValue::set(true),
+            ..Default::default()
+        }
+        .insert(&txn)
+        .await?;
+
+        txn.commit().await?;
+
+        Ok(user)
+    }
+
+    /// Lists every user, newest first.
+    ///
+    /// # Errors
+    ///
+    /// When the query fails
+    pub async fn list_all(db: &DatabaseConnection) -> ModelResult<Vec<Self>> {
+        Ok(users::Entity::find()
+            .order_by_desc(users::Column::Id)
+            .all(db)
+            .await?)
+    }
+
+    /// Counts admins, so the last one cannot be demoted or deleted.
+    ///
+    /// # Errors
+    ///
+    /// When the query fails
+    pub async fn admin_count(db: &DatabaseConnection) -> ModelResult<u64> {
+        Ok(users::Entity::find()
+            .filter(
+                model::query::condition()
+                    .eq(users::Column::Role, ROLE_ADMIN)
+                    .build(),
+            )
+            .count(db)
+            .await?)
     }
 
     /// Creates a JWT

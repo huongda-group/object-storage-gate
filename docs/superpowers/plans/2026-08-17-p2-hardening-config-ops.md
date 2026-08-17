@@ -57,7 +57,7 @@
 - Consumes: —
 - Produces: `crypto::DEV_KEY_B64` thành `pub`. `crypto::validate_master_key(&str) -> Result<()>` — decode base64, kiểm 32 byte, từ chối key dev.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Thêm vào khối `mod tests` cuối `src/models/crypto.rs`:
 
@@ -81,12 +81,12 @@ Thêm vào khối `mod tests` cuối `src/models/crypto.rs`:
     }
 ```
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --lib crypto 2>&1 | tail -20`
 Expected: FAIL biên dịch — `cannot find function 'validate_master_key'`.
 
-- [ ] **Step 3: Viết `validate_master_key`**
+- [x] **Step 3: Viết `validate_master_key`**
 
 Trong `src/models/crypto.rs`, đổi `DEV_KEY_B64` thành `pub` và thêm hàm:
 
@@ -122,7 +122,7 @@ pub fn validate_master_key(b64: &str) -> Result<()> {
 }
 ```
 
-- [ ] **Step 4: Nối vào `after_context`**
+- [x] **Step 4: Nối vào `after_context`**
 
 `src/app.rs`, thay khối guard:
 
@@ -143,12 +143,12 @@ pub fn validate_master_key(b64: &str) -> Result<()> {
     }
 ```
 
-- [ ] **Step 5: Chạy test**
+- [x] **Step 5: Chạy test**
 
 Run: `cargo test --lib crypto 2>&1 | tail -10`
 Expected: PASS 7 test (4 cũ + 3 mới).
 
-- [ ] **Step 6: Kiểm bằng tay rằng boot thật sự bị từ chối**
+- [x] **Step 6: Kiểm bằng tay rằng boot thật sự bị từ chối**
 
 ```bash
 LOCO_ENV=production DATABASE_URL=sqlite::memory: JWT_SECRET=x \
@@ -166,7 +166,7 @@ LOCO_ENV=production DATABASE_URL=sqlite::memory: JWT_SECRET=x \
 Expected: cũng bị từ chối — đây là cái xác nhận guard nằm đúng ở `after_context`
 chứ không phải ở `boot`, nên CLI cũng dính.
 
-- [ ] **Step 7: Sửa tài liệu nói sai**
+- [x] **Step 7: Sửa tài liệu nói sai**
 
 `docs/docker.md:40-41` đang khẳng định guard đã làm việc này từ trước. Giữ nguyên
 câu, giờ nó mới thành đúng — nhưng thêm cách sinh key:
@@ -177,7 +177,7 @@ Reusing the checked-in development key in production is refused by
 mới bằng `openssl rand -base64 32`.
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/ docs/
@@ -202,7 +202,7 @@ panicked at the first key creation instead of at boot."
 - Consumes: —
 - Produces: middleware `limit_payload` tắt, `timeout_request` bật ở 300s, `secure_headers` bật.
 
-- [ ] **Step 1: Viết test khẳng định body lớn qua được**
+- [x] **Step 1: Viết test khẳng định body lớn qua được**
 
 Thêm vào `tests/requests/api.rs`:
 
@@ -238,12 +238,12 @@ async fn body_limit_is_disabled() {
 }
 ```
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod requests::api::body_limit 2>&1 | tail -10`
 Expected: FAIL với 413.
 
-- [ ] **Step 3: Sửa `config/production.yaml`**
+- [x] **Step 3: Sửa `config/production.yaml`**
 
 Thay khối `middlewares`:
 
@@ -273,18 +273,18 @@ Thay khối `middlewares`:
       fallback: "frontend/dist/index.html"
 ```
 
-- [ ] **Step 4: Đồng bộ development và test**
+- [x] **Step 4: Đồng bộ development và test**
 
 Thêm cùng khối `limit_payload` vào `config/development.yaml` (dưới `fallback`) và
 `config/test.yaml`. Test phải khớp production, không thì test ở bước 1 xanh trên
 CI mà production vẫn 413.
 
-- [ ] **Step 5: Chạy test**
+- [x] **Step 5: Chạy test**
 
 Run: `cargo test 2>&1 | tail -10`
 Expected: PASS.
 
-- [ ] **Step 6: Kiểm secure headers có thật sự ra**
+- [x] **Step 6: Kiểm secure headers có thật sự ra**
 
 ```bash
 cargo loco start &
@@ -298,7 +298,7 @@ Ghi chú: `secure_headers` chỉ bật ở production config, nên chạy lệnh
 `LOCO_ENV=production` cộng đủ biến môi trường, hoặc thêm khối này vào
 development config luôn.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add config/ tests/
@@ -323,7 +323,7 @@ every multipart part, before reaching a handler."
 - Consumes: —
 - Produces: `initializers::rate_limit::RateLimitInitializer` — layer `tower_governor` áp lên `/api/auth/login` và `/api/admin/users`, cấu hình qua env `RATE_LIMIT_PER_MINUTE` (default 20) và `RATE_LIMIT_BURST` (default 5).
 
-- [ ] **Step 1: Thêm dependency**
+- [x] **Step 1: Thêm dependency**
 
 Trong `Cargo.toml`, mục `[dependencies]`:
 
@@ -338,7 +338,7 @@ nhất tương thích — kiểm bằng `cargo add tower_governor --dry-run`. Đ
 viện duy nhất được thêm trong cả P2; loco 0.16.4 không ship middleware rate limit
 nào (đã kiểm `loco-rs/src/controller/middleware/`).
 
-- [ ] **Step 2: Viết test**
+- [x] **Step 2: Viết test**
 
 Tạo `tests/requests/rate_limit.rs`:
 
@@ -377,12 +377,12 @@ async fn login_is_rate_limited() {
 
 Thêm `mod rate_limit;` vào `tests/requests/mod.rs`.
 
-- [ ] **Step 3: Chạy để chắc nó fail**
+- [x] **Step 3: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod requests::rate_limit 2>&1 | tail -10`
 Expected: FAIL — không bao giờ thấy 429.
 
-- [ ] **Step 4: Viết initializer**
+- [x] **Step 4: Viết initializer**
 
 Tạo `src/initializers/rate_limit.rs`:
 
@@ -452,7 +452,7 @@ lên, nó phải được loại trừ — ghi lại bằng comment:
 
 Đặt comment này ngay trên `after_routes`.
 
-- [ ] **Step 5: Đăng ký initializer**
+- [x] **Step 5: Đăng ký initializer**
 
 `src/initializers/mod.rs`:
 
@@ -470,7 +470,7 @@ pub mod rate_limit;
     }
 ```
 
-- [ ] **Step 6: Chạy test**
+- [x] **Step 6: Chạy test**
 
 Run: `cargo test --test mod requests::rate_limit 2>&1 | tail -10`
 Expected: PASS.
@@ -481,7 +481,7 @@ Expected: PASS. Nếu test khác bắt đầu ăn 429 vì bắn nhiều request 
 biến môi trường của test, hoặc nới burst mặc định lên 30. Đừng tắt hẳn ở test —
 tắt là mất luôn cái test vừa viết.
 
-- [ ] **Step 7: Ghi tài liệu**
+- [x] **Step 7: Ghi tài liệu**
 
 Thêm vào `README.md` mục biến môi trường:
 
@@ -490,7 +490,7 @@ Thêm vào `README.md` mục biến môi trường:
 | `RATE_LIMIT_BURST` | `5` | Số request liên tiếp cho phép trước khi áp nhịp trên. |
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock src/ tests/ README.md
@@ -518,7 +518,7 @@ so login, and every other endpoint, accepted unlimited attempts."
 - Consumes: —
 - Produces: `users.api_key` lưu Argon2 hash. `users::Model::rotate_api_token(db) -> ModelResult<(Model, String)>` trả token plaintext đúng một lần. `Authenticable::find_by_api_key` tra bằng prefix + verify hash.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Thay test PAT hiện có trong `tests/requests/api.rs`:
 
@@ -580,12 +580,12 @@ async fn rotating_the_pat_invalidates_the_old_one() {
 }
 ```
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod requests::api::pat 2>&1 | tail -10`
 Expected: FAIL — `GET /api/token` vẫn trả 200.
 
-- [ ] **Step 3: Viết migration**
+- [x] **Step 3: Viết migration**
 
 Tạo `migration/src/m20260817_000002_hash_api_key.rs`:
 
@@ -621,14 +621,14 @@ của toàn bộ token. Tra cứu là một truy vấn bằng prefix rồi một
 `verify_password`. Đây là mô hình mà GitHub và Stripe dùng cho token của họ, và
 nó chạy trên cả ba backend vì không cần `ILIKE` hay hàm riêng của backend nào.
 
-- [ ] **Step 4: Sinh lại entity**
+- [x] **Step 4: Sinh lại entity**
 
 ```bash
 DB_TYPE=postgres cargo loco db reset
 DB_TYPE=postgres cargo loco db entities
 ```
 
-- [ ] **Step 5: Sửa model**
+- [x] **Step 5: Sửa model**
 
 Trong `src/models/users.rs`:
 
@@ -728,7 +728,7 @@ Thêm phương thức xoay:
     }
 ```
 
-- [ ] **Step 6: Sửa controller**
+- [x] **Step 6: Sửa controller**
 
 Trong `src/controllers/api.rs`, xoá handler `token` và sửa `token_rotate`:
 
@@ -745,7 +745,7 @@ async fn token_rotate(caller: Caller, State(ctx): State<AppContext>) -> Result<R
 Trong `routes()`, bỏ `.add("/token", get(token))`, giữ
 `.add("/token/rotate", post(token_rotate))`.
 
-- [ ] **Step 7: Sửa fixture**
+- [x] **Step 7: Sửa fixture**
 
 `src/fixtures/users.yaml` — `api_key` phải là hash chứ không phải token. Dùng
 chính hash của mật khẩu đã có trong fixture để khỏi sinh mới, và đặt
@@ -758,7 +758,7 @@ chính hash của mật khẩu đã có trong fixture để khỏi sinh mới, v
 
 Áp cho cả hai bản ghi. Bỏ `api_key: lo-...` cũ.
 
-- [ ] **Step 8: Sửa console**
+- [x] **Step 8: Sửa console**
 
 `frontend/src/lib/keys.ts` — bỏ hàm gọi `GET /api/token`.
 `frontend/src/routes/_app/api.tsx` — màn PAT không còn hiển thị token hiện tại
@@ -774,7 +774,7 @@ chính hash của mật khẩu đã có trong fixture để khỏi sinh mới, v
 Token mới trả về từ `POST /api/token/rotate` hiển thị qua `SecretRevealModal`
 đang có sẵn.
 
-- [ ] **Step 9: Chạy test ba backend**
+- [x] **Step 9: Chạy test ba backend**
 
 ```bash
 cargo test 2>&1 | tail -5
@@ -783,7 +783,7 @@ DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test 2>&1 | tail -5
 cd frontend && corepack pnpm vitest run && npx tsc --noEmit
 ```
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add -A
@@ -810,7 +810,7 @@ hashes, revealed once at rotation."
 - Consumes: —
 - Produces: config production khởi động được trên hạ tầng thật; compose không còn credential mặc định.
 
-- [ ] **Step 1: Sửa `config/production.yaml`**
+- [x] **Step 1: Sửa `config/production.yaml`**
 
 Ba khối. Thứ nhất, `server.host` bỏ default để boot fail to thay vì gửi mail sai
 địa chỉ — mà giờ không còn mail, nhưng link trong console và `full_url()` vẫn
@@ -861,7 +861,7 @@ mailer:
     enable: false
 ```
 
-- [ ] **Step 2: Chạy thử boot production**
+- [x] **Step 2: Chạy thử boot production**
 
 ```bash
 LOCO_ENV=production DATABASE_URL=sqlite://./data/prod-test.sqlite?mode=rwc \
@@ -879,7 +879,7 @@ Lưu ý: `auto_migrate: false` nghĩa là phải chạy migrate trước:
 LOCO_ENV=production DATABASE_URL=... cargo loco db migrate
 ```
 
-- [ ] **Step 3: Sửa `.dockerignore`**
+- [x] **Step 3: Sửa `.dockerignore`**
 
 ```
 target/
@@ -899,7 +899,7 @@ tests/s3/.venv/
 data/
 ```
 
-- [ ] **Step 4: Sửa Dockerfile**
+- [x] **Step 4: Sửa Dockerfile**
 
 Pin base image và thêm healthcheck:
 
@@ -929,7 +929,7 @@ healthcheck. Ghi lại lựa chọn:
 # Ceiling: add curl and hit /_readiness if the orchestrator cannot probe HTTP itself.
 ```
 
-- [ ] **Step 5: Sửa compose**
+- [x] **Step 5: Sửa compose**
 
 `docker-compose/postgres.yml`:
 
@@ -966,7 +966,7 @@ vận hành tin rằng queue đã bền và có distributed lock. Thêm comment 
 # actually wires the queue and the quota locks — see the roadmap, phase 6.
 ```
 
-- [ ] **Step 6: Chạy thử compose**
+- [x] **Step 6: Chạy thử compose**
 
 ```bash
 POSTGRES_USER=osg POSTGRES_PASSWORD=$(openssl rand -hex 16) \
@@ -981,7 +981,7 @@ docker compose -f docker-compose.yml -f docker-compose/postgres.yml down -v
 Expected: `/_readiness` trả 200. Nếu fail vì chưa migrate, thêm bước migrate vào
 `docs/docker.md` (xem bước sau).
 
-- [ ] **Step 7: Cập nhật tài liệu vận hành**
+- [x] **Step 7: Cập nhật tài liệu vận hành**
 
 `docs/docker.md` thêm mục:
 
@@ -1007,7 +1007,7 @@ chạy trên Postgres và SQLite — trên MySQL dùng `mysqldump`.
 là bắt buộc, `DB_CONNECT_TIMEOUT`/`DB_IDLE_TIMEOUT`/`DB_MAX_CONNECTIONS` với giá
 trị mặc định mới.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add config/ Dockerfile .dockerignore docker-compose.yml docker-compose/ docs/ README.md
@@ -1033,7 +1033,7 @@ that no code reads."
 - Consumes: —
 - Produces: CI chạy pnpm, frontend test/lint/typecheck, clippy `--all-targets`, `cargo audit`. Workflow publish chỉ chạy sau CI xanh, và `latest` không dính tag RC.
 
-- [ ] **Step 1: Sửa biome ignore**
+- [x] **Step 1: Sửa biome ignore**
 
 `frontend/biome.json`:
 
@@ -1046,7 +1046,7 @@ that no code reads."
 Kiểm: `cd frontend && corepack pnpm biome check` phải sạch. Trước đó lệnh này nổ
 582 lỗi vì quét cả bundle đã build — và nó là lệnh đang được ghi trong `CLAUDE.md`.
 
-- [ ] **Step 2: Sửa job frontend trong `ci.yaml`**
+- [x] **Step 2: Sửa job frontend trong `ci.yaml`**
 
 Thay ba step (`Setup node`, `Build frontend`) bằng:
 
@@ -1081,13 +1081,13 @@ image.
 `npm install` trước đây chạy trên một repo chỉ có `pnpm-lock.yaml`, nên CI giải
 phiên bản dependency khác hẳn image. CI xanh không có nghĩa image build được.
 
-- [ ] **Step 3: Clippy quét cả test**
+- [x] **Step 3: Clippy quét cả test**
 
 Trong job clippy, đổi `args` thành `--all-features --all-targets`. `CLAUDE.md` và
 `README.md:196` đều kê `--all-targets`; CI thì không, nên `tests/` chưa bao giờ
 được lint.
 
-- [ ] **Step 4: Thêm job audit**
+- [x] **Step 4: Thêm job audit**
 
 ```yaml
   audit:
@@ -1100,7 +1100,7 @@ Trong job clippy, đổi `args` thành `--all-features --all-targets`. `CLAUDE.m
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-- [ ] **Step 5: Thay `actions-rs/cargo@v1`**
+- [x] **Step 5: Thay `actions-rs/cargo@v1`**
 
 Ba chỗ dùng action này (`ci.yaml:29,50,129`). Nó không được bảo trì từ 2021 và
 ghim vào Node runtime đã bị gỡ. Thay bằng `run:` thẳng:
@@ -1120,7 +1120,7 @@ ghim vào Node runtime đã bị gỡ. Thay bằng `run:` thẳng:
         run: cargo test --all-features --all
 ```
 
-- [ ] **Step 6: Gate workflow publish**
+- [x] **Step 6: Gate workflow publish**
 
 `.github/workflows/docker.yaml`, thêm vào job `publish`:
 
@@ -1138,7 +1138,7 @@ và thêm job `verify` phía trên, gọi lại CI:
 
 Để `ci.yaml` gọi lại được, thêm `workflow_call:` vào khối `on:` của nó.
 
-- [ ] **Step 7: `latest` không dính RC**
+- [x] **Step 7: `latest` không dính RC**
 
 Trong `docker.yaml` step `meta`:
 
@@ -1157,7 +1157,7 @@ Trong `docker.yaml` step `meta`:
             type=raw,value=latest,enable=${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
 ```
 
-- [ ] **Step 8: Kiểm workflow cú pháp**
+- [x] **Step 8: Kiểm workflow cú pháp**
 
 ```bash
 npx --yes @action-validator/cli --verbose .github/workflows/ci.yaml
@@ -1166,7 +1166,7 @@ npx --yes @action-validator/cli --verbose .github/workflows/docker.yaml
 
 Nếu không có mạng, ít nhất chạy `yq . .github/workflows/*.yaml` để bắt lỗi YAML.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add .github/ frontend/biome.json

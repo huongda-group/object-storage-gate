@@ -83,3 +83,66 @@ async fn list_by_prefix_filters() {
     let keys: Vec<_> = listed.iter().map(|o| o.object_key.as_str()).collect();
     assert_eq!(keys, vec!["images/1.png", "images/2.png"]);
 }
+
+/// A LIKE wildcard in the prefix must match literally, not as a pattern.
+/// Once access-key prefix scoping is wired to this query, an unescaped `_` lets a key
+/// confined to `tenants/a/` read `tenants/ab/`, and `%` lists the whole bucket.
+#[tokio::test]
+#[serial]
+async fn list_by_prefix_treats_wildcards_literally() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+
+    let user = users::Model::find_by_email(db, "user1@example.com")
+        .await
+        .unwrap();
+    let bucket = buckets::Model::create(db, user.id, "wildcards", 0)
+        .await
+        .unwrap();
+
+    for key in ["a_/one", "ab/two", "a%/three", "az/four"] {
+        objects::Model::put_object(db, bucket.id, key, 1, "e", "text/plain")
+            .await
+            .unwrap();
+    }
+
+    let underscore = objects::Model::list_by_prefix(db, bucket.id, "a_/", 100)
+        .await
+        .unwrap();
+    assert_eq!(underscore.len(), 1);
+    assert_eq!(underscore[0].object_key, "a_/one");
+
+    let percent = objects::Model::list_by_prefix(db, bucket.id, "a%", 100)
+        .await
+        .unwrap();
+    assert_eq!(percent.len(), 1);
+    assert_eq!(percent[0].object_key, "a%/three");
+}
+
+/// An empty prefix lists the whole bucket, which is what ListObjectsV2 with no prefix means.
+#[tokio::test]
+#[serial]
+async fn list_by_prefix_with_empty_prefix_lists_everything() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+
+    let user = users::Model::find_by_email(db, "user1@example.com")
+        .await
+        .unwrap();
+    let bucket = buckets::Model::create(db, user.id, "everything", 0)
+        .await
+        .unwrap();
+
+    for key in ["one", "two", "three"] {
+        objects::Model::put_object(db, bucket.id, key, 1, "e", "text/plain")
+            .await
+            .unwrap();
+    }
+
+    let all = objects::Model::list_by_prefix(db, bucket.id, "", 100)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 3);
+}

@@ -1,6 +1,6 @@
 use chrono::Utc;
 use loco_rs::prelude::*;
-use sea_orm::{prelude::DateTimeWithTimeZone, QueryOrder, TransactionTrait};
+use sea_orm::{prelude::DateTimeWithTimeZone, sea_query::Expr, QueryOrder, TransactionTrait};
 use uuid::Uuid;
 
 pub use super::_entities::access_keys::{ActiveModel, Column, Entity, Model};
@@ -291,39 +291,63 @@ impl Model {
     /// Move a key between `active` and `disabled`.
     /// `revoked` is terminal: a revoked key is never brought back, because callers may already treat it as gone.
     ///
+    /// The guard lives in the UPDATE rather than in a check against `self`, because `self` may have been loaded before a concurrent revoke landed — which is exactly the window an admin hits when they revoke a leaked key while the console has a PATCH in flight.
+    ///
     /// # Errors
     /// Returns an error for an unknown status, for any change to a revoked key, or on DB failure.
     pub async fn set_status(self, db: &DatabaseConnection, status: &str) -> ModelResult<Self> {
-        if self.status == KEY_REVOKED {
-            return Err(invalid("a revoked key cannot change status"));
-        }
         if status != KEY_ACTIVE && status != KEY_DISABLED {
             return Err(invalid("status must be active or disabled"));
         }
-        let mut am: ActiveModel = self.into();
-        am.status = ActiveValue::set(status.to_string());
-        Ok(am.update(db).await?)
+
+        let res = Entity::update_many()
+            .col_expr(Column::Status, Expr::value(status))
+            .filter(Column::Id.eq(self.id))
+            .filter(Column::Status.ne(KEY_REVOKED))
+            .exec(db)
+            .await?;
+
+        if res.rows_affected == 0 {
+            return Err(invalid("a revoked key cannot change status"));
+        }
+
+        Self::reload(db, self.id).await
     }
 
     /// Permanent. The row stays for audit; only the status changes.
+    /// Idempotent: revoking an already-revoked key is not an error, because containing an incident is exactly when someone clicks twice.
     ///
     /// # Errors
     /// Returns an error on DB failure.
     pub async fn revoke(self, db: &DatabaseConnection) -> ModelResult<Self> {
-        let mut am: ActiveModel = self.into();
-        am.status = ActiveValue::set(KEY_REVOKED.to_string());
-        Ok(am.update(db).await?)
+        Entity::update_many()
+            .col_expr(Column::Status, Expr::value(KEY_REVOKED))
+            .filter(Column::Id.eq(self.id))
+            .exec(db)
+            .await?;
+
+        Self::reload(db, self.id).await
+    }
+
+    /// Reloads a key by its primary key, after a guarded UPDATE has changed it.
+    ///
+    /// # Errors
+    /// Returns an error when the row is gone, or on DB failure.
+    async fn reload(db: &DatabaseConnection, id: i32) -> ModelResult<Self> {
+        Entity::find_by_id(id)
+            .one(db)
+            .await?
+            .ok_or(ModelError::EntityNotFound)
     }
 
     /// Issue a replacement key with the same policy and disable this one.
     /// The old key is disabled rather than revoked so a running app has a window to swap its config.
     ///
+    /// Disables first, then creates. The other order left a live replacement behind whenever the second write failed, and the caller got an `Err` so nobody ever saw its secret.
+    ///
     /// # Errors
-    /// Returns an error when the key is revoked, or on DB failure.
+    /// Returns an error when the key is revoked or expired, or on DB failure.
     pub async fn rotate(&self, db: &DatabaseConnection) -> ModelResult<(Self, String)> {
-        if self.status == KEY_REVOKED {
-            return Err(invalid("a revoked key cannot be rotated"));
-        }
         // Copying a lapsed `expires_at` onto the new key would fail validation with a confusing message; say what is actually wrong instead.
         if self.is_expired() {
             return Err(invalid(
@@ -336,13 +360,19 @@ impl Model {
             permissions: self.permissions(db).await?,
             prefixes: self.prefixes(db).await?,
         };
-        let (new_key, secret) = Self::create_key(db, self.user_id, &params).await?;
 
-        let mut am: ActiveModel = self.clone().into();
-        am.status = ActiveValue::set(KEY_DISABLED.to_string());
-        am.update(db).await?;
+        let disabled = Entity::update_many()
+            .col_expr(Column::Status, Expr::value(KEY_DISABLED))
+            .filter(Column::Id.eq(self.id))
+            .filter(Column::Status.ne(KEY_REVOKED))
+            .exec(db)
+            .await?;
 
-        Ok((new_key, secret))
+        if disabled.rows_affected == 0 {
+            return Err(invalid("a revoked key cannot be rotated"));
+        }
+
+        Self::create_key(db, self.user_id, &params).await
     }
 
     /// Replace the key's permissions.

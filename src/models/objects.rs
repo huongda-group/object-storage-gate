@@ -1,8 +1,24 @@
 use loco_rs::prelude::*;
-use sea_orm::{QueryOrder, QuerySelect};
+use sea_orm::{sea_query::Expr, QueryOrder, QuerySelect};
 use uuid::Uuid;
 
 pub use super::_entities::objects::{ActiveModel, Column, Entity, Model};
+
+/// The smallest string strictly greater than every string starting with `prefix`.
+///
+/// Increments the last code point that can be incremented, dropping trailing ones that cannot.
+/// Returns `None` when no such bound exists, in which case the caller keeps only the lower bound — every remaining key sorts after the prefix anyway.
+fn prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        if let Some(next) = char::from_u32(u32::from(last) + 1) {
+            let mut bound: String = chars.into_iter().collect();
+            bound.push(next);
+            return Some(bound);
+        }
+    }
+    None
+}
 
 #[async_trait::async_trait]
 impl ActiveModelBehavior for super::_entities::objects::ActiveModel {
@@ -23,6 +39,9 @@ impl ActiveModelBehavior for super::_entities::objects::ActiveModel {
 impl Model {
     /// Insert a new object or overwrite the existing `(bucket_id, key)` row (`PutObject` semantics, versioning off).
     ///
+    /// Tries the update first and only inserts when nothing was updated, then retries the update once if the insert lost a race.
+    /// The previous read-then-insert let two concurrent writes both see no row, both insert, and one hit the unique index with a 500 — which S3 clients trigger routinely, because retrying is what they do.
+    ///
     /// # Errors
     /// Returns an error on DB failure.
     pub async fn put_object(
@@ -33,23 +52,43 @@ impl Model {
         etag: &str,
         content_type: &str,
     ) -> ModelResult<Self> {
-        if let Some(existing) = Self::get(db, bucket_id, key).await? {
-            let mut am: ActiveModel = existing.into();
-            am.size = ActiveValue::set(size);
-            am.etag = ActiveValue::set(etag.to_string());
-            am.content_type = ActiveValue::set(content_type.to_string());
-            return Ok(am.update(db).await?);
+        for attempt in 0..2 {
+            let updated = Entity::update_many()
+                .col_expr(Column::Size, Expr::value(size))
+                .col_expr(Column::Etag, Expr::value(etag))
+                .col_expr(Column::ContentType, Expr::value(content_type))
+                .filter(Column::BucketId.eq(bucket_id))
+                .filter(Column::ObjectKey.eq(key))
+                .exec(db)
+                .await?;
+
+            if updated.rows_affected > 0 {
+                return Self::get(db, bucket_id, key)
+                    .await?
+                    .ok_or(ModelError::EntityNotFound);
+            }
+
+            let insert = ActiveModel {
+                bucket_id: ActiveValue::set(bucket_id),
+                object_key: ActiveValue::set(key.to_string()),
+                size: ActiveValue::set(size),
+                etag: ActiveValue::set(etag.to_string()),
+                content_type: ActiveValue::set(content_type.to_string()),
+                ..Default::default()
+            }
+            .insert(db)
+            .await;
+
+            match insert {
+                Ok(row) => return Ok(row),
+                // Another writer inserted the same key between our update and our insert.
+                // Loop once more; the update finds the row this time.
+                Err(_) if attempt == 0 => continue,
+                Err(e) => return Err(e.into()),
+            }
         }
-        Ok(ActiveModel {
-            bucket_id: ActiveValue::set(bucket_id),
-            object_key: ActiveValue::set(key.to_string()),
-            size: ActiveValue::set(size),
-            etag: ActiveValue::set(etag.to_string()),
-            content_type: ActiveValue::set(content_type.to_string()),
-            ..Default::default()
-        }
-        .insert(db)
-        .await?)
+
+        Err(ModelError::msg("put_object could not converge"))
     }
 
     /// # Errors
@@ -79,6 +118,10 @@ impl Model {
 
     /// Objects in a bucket whose key starts with `prefix`, up to `limit`, ordered by key (`ListObjectsV2` backing query).
     ///
+    /// Uses a range comparison rather than `LIKE`.
+    /// sea-orm's `starts_with` builds `format!("{}%", s)` with no escaping, so `%` and `_` in a caller-supplied prefix act as wildcards, and SQLite's `LIKE` is case-insensitive for ASCII while Postgres's is not.
+    /// A range is literal on all three backends and, unlike a `LIKE`, can use the `(bucket_id, object_key)` index.
+    ///
     /// # Errors
     /// Returns an error on DB failure.
     pub async fn list_by_prefix(
@@ -87,12 +130,47 @@ impl Model {
         prefix: &str,
         limit: u64,
     ) -> ModelResult<Vec<Self>> {
-        Ok(Entity::find()
+        let mut query = Entity::find()
             .filter(Column::BucketId.eq(bucket_id))
-            .filter(Column::ObjectKey.starts_with(prefix))
             .order_by_asc(Column::ObjectKey)
-            .limit(limit)
-            .all(db)
-            .await?)
+            .limit(limit);
+
+        if !prefix.is_empty() {
+            query = query.filter(Column::ObjectKey.gte(prefix));
+            if let Some(upper) = prefix_upper_bound(prefix) {
+                query = query.filter(Column::ObjectKey.lt(upper));
+            }
+        }
+
+        Ok(query.all(db).await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prefix_upper_bound;
+
+    #[test]
+    fn upper_bound_increments_the_last_character() {
+        // '/' is U+002F, so the range for "a/" is ["a/", "a0").
+        assert_eq!(prefix_upper_bound("a/").as_deref(), Some("a0"));
+        assert_eq!(
+            prefix_upper_bound("tenants/a").as_deref(),
+            Some("tenants/b")
+        );
+    }
+
+    #[test]
+    fn upper_bound_skips_the_surrogate_gap() {
+        // char::from_u32 returns None for D800..DFFF, so the loop has to fall back a character.
+        let s = format!("x{}", '\u{D7FF}');
+        let bound = prefix_upper_bound(&s).unwrap();
+        assert!(bound > s);
+    }
+
+    #[test]
+    fn upper_bound_of_an_all_max_prefix_is_none() {
+        let s = format!("{}", char::MAX);
+        assert_eq!(prefix_upper_bound(&s), None);
     }
 }

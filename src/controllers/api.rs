@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     models::{_entities::users, access_keys, buckets},
     views::{
-        api::{BucketResponse, UsageResponse, WhoamiResponse},
+        api::{SummaryResponse, UsageResponse, WhoamiResponse},
+        auth::CurrentResponse,
         keys::{CreateKeyResponse, KeyResponse, TokenResponse},
     },
 };
@@ -250,12 +251,6 @@ async fn revoke_key(
 }
 
 #[debug_handler]
-async fn list_buckets(caller: Caller, State(ctx): State<AppContext>) -> Result<Response> {
-    let rows = buckets::Model::list_for_user(&ctx.db, caller.user.id).await?;
-    format::json(rows.iter().map(BucketResponse::new).collect::<Vec<_>>())
-}
-
-#[debug_handler]
 async fn usage(caller: Caller, State(ctx): State<AppContext>) -> Result<Response> {
     let rows = buckets::Model::list_for_user(&ctx.db, caller.user.id).await?;
     format::json(UsageResponse::new(&caller.user, &rows))
@@ -267,6 +262,49 @@ async fn usage(caller: Caller, State(ctx): State<AppContext>) -> Result<Response
 async fn token_rotate(caller: Caller, State(ctx): State<AppContext>) -> Result<Response> {
     let (_user, token) = caller.user.rotate_api_token(&ctx.db).await?;
     format::json(TokenResponse { token })
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UpdateMeParams {
+    pub name: Option<String>,
+}
+
+/// Renames the calling user.
+/// Deliberately narrow: role and quota are an admin's decision, and a struct with only `name` makes that structural rather than a check someone can forget.
+#[debug_handler]
+async fn update_me(
+    caller: Caller,
+    State(ctx): State<AppContext>,
+    Json(params): Json<UpdateMeParams>,
+) -> Result<Response> {
+    let mut am: users::ActiveModel = caller.user.into();
+    if let Some(name) = &params.name {
+        am.name = ActiveValue::set(name.clone());
+    }
+    let updated = am.update(&ctx.db).await?;
+    format::json(CurrentResponse::new(&updated))
+}
+
+#[debug_handler]
+async fn summary(caller: Caller, State(ctx): State<AppContext>) -> Result<Response> {
+    let db = &ctx.db;
+    let bucket_rows = buckets::Model::list_for_user(db, caller.user.id).await?;
+    let key_rows = access_keys::Model::list_for_user(db, caller.user.id).await?;
+
+    format::json(SummaryResponse {
+        used_bytes: caller.user.used_bytes,
+        reserved_bytes: caller.user.reserved_bytes,
+        max_bytes: caller.user.max_bytes,
+        bucket_count: i64::try_from(bucket_rows.len()).unwrap_or(i64::MAX),
+        object_count: bucket_rows.iter().map(|b| b.object_count).sum(),
+        active_key_count: i64::try_from(
+            key_rows
+                .iter()
+                .filter(|k| k.key.status == access_keys::KEY_ACTIVE)
+                .count(),
+        )
+        .unwrap_or(i64::MAX),
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -300,6 +338,8 @@ pub fn routes() -> Routes {
     Routes::new()
         .prefix("/api")
         .add("/whoami", get(whoami))
+        .add("/me", patch(update_me))
+        .add("/me/summary", get(summary))
         .add("/me/password", post(change_password))
         .add("/keys", get(list_keys).post(create_key))
         .add(
@@ -307,7 +347,6 @@ pub fn routes() -> Routes {
             get(show_key).patch(update_key).delete(revoke_key),
         )
         .add("/keys/{pid}/rotate", post(rotate_key))
-        .add("/buckets", get(list_buckets))
         .add("/usage", get(usage))
         .add("/token/rotate", post(token_rotate))
 }

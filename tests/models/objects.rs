@@ -17,7 +17,7 @@ async fn bucket(db: &sea_orm::DatabaseConnection) -> i32 {
     .await
     .unwrap()
     .id;
-    buckets::Model::create(db, uid, "b", 0).await.unwrap().id
+    buckets::Model::create(db, uid, "bkt", 0).await.unwrap().id
 }
 
 #[tokio::test]

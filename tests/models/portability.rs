@@ -98,10 +98,13 @@ async fn object_keys_are_case_sensitive() {
     assert_eq!(lower.size, 20);
 }
 
-/// One owner must be able to hold `media` and `Media` as separate buckets.
+/// Bucket names are lowercase-only by validation, so two names differing only in case can
+/// never both exist and the MySQL collation cannot bite there. It still bites on object keys,
+/// which `object_keys_are_case_sensitive` covers — this asserts the validation that makes the
+/// bucket case moot.
 #[tokio::test]
 #[serial]
-async fn bucket_names_are_case_sensitive() {
+async fn bucket_names_reject_uppercase() {
     let boot = boot_test::<App>().await.unwrap();
     let db = &boot.app_context.db;
     seed::<App>(&boot.app_context).await.unwrap();
@@ -115,8 +118,5 @@ async fn bucket_names_are_case_sensitive() {
         .unwrap();
     let second = buckets::Model::create(db, user.id, "Media", 0).await;
 
-    assert!(
-        second.is_ok(),
-        "bucket names differing only in case must be distinct"
-    );
+    assert!(second.is_err(), "an uppercase bucket name must be rejected");
 }

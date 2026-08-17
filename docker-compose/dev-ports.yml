@@ -1,0 +1,13 @@
+# Dev-only overlay: publishes the database port to the host so `cargo test` on the host can
+# reach it.
+#
+#   docker compose -f docker-compose.yml -f docker-compose/postgres.yml \
+#                  -f docker-compose/dev-ports.yml up -d db
+#
+# Never use this in production. The production overlays deliberately keep the database off the
+# host network — an earlier version published 5432 and 3306 with a default password of `loco`,
+# which put the production database on the host's network behind a two-word credential.
+services:
+  db:
+    ports:
+      - "${DB_HOST_PORT:-5432}:${DB_CONTAINER_PORT:-5432}"

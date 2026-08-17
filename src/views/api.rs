@@ -65,3 +65,15 @@ impl UsageResponse {
         }
     }
 }
+
+/// The account summary the profile and dashboard screens show.
+/// Every number comes from the database; those screens previously read them from a fixture.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SummaryResponse {
+    pub used_bytes: i64,
+    pub reserved_bytes: i64,
+    pub max_bytes: i64,
+    pub bucket_count: i64,
+    pub object_count: i64,
+    pub active_key_count: i64,
+}

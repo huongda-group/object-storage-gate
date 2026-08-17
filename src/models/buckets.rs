@@ -57,7 +57,67 @@ impl ActiveModelBehavior for super::_entities::buckets::ActiveModel {
     }
 }
 
+/// Longest bucket name the API accepts, matching the S3 bucket-name rules the console mirrors.
+pub const MAX_BUCKET_NAME_LEN: usize = 63;
+
+/// Shortest bucket name the API accepts.
+pub const MIN_BUCKET_NAME_LEN: usize = 3;
+
+/// Validates a bucket name against the S3 naming rules.
+///
+/// Lowercase letters, digits, hyphens and dots; must start and end alphanumeric.
+/// The gateway rewrites this into a path segment of the physical key, so a name that S3 would reject is a name that cannot round-trip.
+///
+/// # Errors
+///
+/// Returns a message error describing the first rule the name breaks.
+pub fn validate_name(name: &str) -> ModelResult<()> {
+    if name.len() < MIN_BUCKET_NAME_LEN || name.len() > MAX_BUCKET_NAME_LEN {
+        return Err(ModelError::msg(
+            "bucket name must be between 3 and 63 characters",
+        ));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+    {
+        return Err(ModelError::msg(
+            "bucket name may contain only lowercase letters, digits, hyphens and dots",
+        ));
+    }
+    let first_last_ok = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    if !name.starts_with(first_last_ok) || !name.ends_with(first_last_ok) {
+        return Err(ModelError::msg(
+            "bucket name must start and end with a letter or digit",
+        ));
+    }
+    if name.contains("..") {
+        return Err(ModelError::msg("bucket name may not contain '..'"));
+    }
+    Ok(())
+}
+
 impl Model {
+    /// A bucket by its public id, scoped to its owner.
+    ///
+    /// The ownership condition lives in the query, so a bucket belonging to someone else reads as absent rather than as forbidden — the same shape `access_keys::Model::find_by_pid_for_user` already uses.
+    ///
+    /// # Errors
+    /// Returns an error when no such bucket belongs to this user, or on DB failure.
+    pub async fn find_by_pid_for_user(
+        db: &DatabaseConnection,
+        pid: &str,
+        user_id: i32,
+    ) -> ModelResult<Self> {
+        let parsed = Uuid::parse_str(pid).map_err(|e| ModelError::Any(e.into()))?;
+        Entity::find()
+            .filter(Column::Pid.eq(parsed))
+            .filter(Column::UserId.eq(user_id))
+            .one(db)
+            .await?
+            .ok_or(ModelError::EntityNotFound)
+    }
+
     /// Create a bucket for a user. `max_bytes == 0` means unlimited.
     ///
     /// # Errors
@@ -68,6 +128,10 @@ impl Model {
         name: &str,
         max_bytes: i64,
     ) -> ModelResult<Self> {
+        validate_name(name)?;
+        if max_bytes < 0 {
+            return Err(ModelError::msg("max_bytes must not be negative"));
+        }
         Ok(ActiveModel {
             user_id: ActiveValue::set(Some(user_id)),
             name: ActiveValue::set(name.to_string()),

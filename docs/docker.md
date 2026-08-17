@@ -55,6 +55,15 @@ a gateway-wide one. Turned on without a proxy that overwrites the header,
 anyone resets their own bucket by sending a new value. Set it only when a proxy
 you control sets the header.
 
+For local development the database port has to reach the host, which the production
+overlays deliberately do not do. Add `docker-compose/dev-ports.yml` for that, and never in
+production:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose/postgres.yml \
+               -f docker-compose/dev-ports.yml up -d db
+```
+
 Compose keeps the app in `docker-compose.yml` and adds one
 overlay per database:
 

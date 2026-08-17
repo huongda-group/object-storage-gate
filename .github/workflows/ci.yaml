@@ -5,6 +5,8 @@ on:
       - master
       - main
   pull_request:
+  # Lets the publish workflow gate on this one instead of shipping an untested tag.
+  workflow_call:
 
 env:
   RUST_TOOLCHAIN: stable
@@ -26,10 +28,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt
       - name: Run cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: cargo fmt --all -- --check
 
   clippy:
     name: Run Clippy
@@ -46,11 +45,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
+      # --all-targets so tests/ is linted too; CLAUDE.md and README both prescribe it and CI
+      # never ran it.
       - name: Run cargo clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W rust-2018-idioms
+        run: cargo clippy --all-features --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W rust-2018-idioms
 
   test:
     name: Run Tests
@@ -66,15 +64,6 @@ jobs:
         db: [sqlite, postgres, mysql]
 
     services:
-      redis:
-        image: redis
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - "6379:6379"
       postgres:
         image: postgres
         env:
@@ -109,12 +98,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      # Was `npm install` against a repo that only has pnpm-lock.yaml, on a node-version read
+      # from a matrix that defines only `db`, so CI resolved dependency versions the image
+      # never used and ran on whatever node the runner defaulted to.
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{matrix.node-version}}
+          node-version: "22"
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+        working-directory: ./frontend
+      - name: Frontend lint
+        run: pnpm biome check
+        working-directory: ./frontend
+      - name: Frontend typecheck
+        run: pnpm exec tsc --noEmit
+        working-directory: ./frontend
+      - name: Frontend tests
+        run: pnpm vitest run
+        working-directory: ./frontend
       - name: Build frontend
-        run: npm install && npm run build
+        run: pnpm build
         working-directory: ./frontend
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
@@ -126,10 +132,21 @@ jobs:
             mysql)    echo "DATABASE_URL=mysql://mysql:mysql@localhost:3306/mysql_test" >> "$GITHUB_ENV" ;;
           esac
       - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --all
-        env:
-          REDIS_URL: redis://localhost:${{job.services.redis.ports[6379]}}
+        run: cargo test --all-features --all
           
+
+  audit:
+    name: Cargo audit
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+      checks: write
+
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -12,6 +12,7 @@ mod m20260724_000007_bucket_backend_store;
 mod m20260815_000001_mysql_timestamp_precision;
 mod m20260817_000001_auth_teardown;
 mod m20260817_000002_hash_api_key;
+mod m20260817_000003_column_lengths;
 
 pub struct Migrator;
 
@@ -30,6 +31,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260815_000001_mysql_timestamp_precision::Migration),
             Box::new(m20260817_000001_auth_teardown::Migration),
             Box::new(m20260817_000002_hash_api_key::Migration),
+            Box::new(m20260817_000003_column_lengths::Migration),
             // inject-above (do not remove this comment)
         ]
     }

@@ -2,6 +2,8 @@ use loco_rs::prelude::*;
 use sea_orm::{sea_query::Expr, QueryOrder, QuerySelect};
 use uuid::Uuid;
 
+use super::quota;
+
 pub use super::_entities::objects::{ActiveModel, Column, Entity, Model};
 
 /// The smallest string strictly greater than every string starting with `prefix`.
@@ -39,12 +41,54 @@ impl ActiveModelBehavior for super::_entities::objects::ActiveModel {
 impl Model {
     /// Insert a new object or overwrite the existing `(bucket_id, key)` row (`PutObject` semantics, versioning off).
     ///
-    /// Tries the update first and only inserts when nothing was updated, then retries the update once if the insert lost a race.
-    /// The previous read-then-insert let two concurrent writes both see no row, both insert, and one hit the unique index with a 500 — which S3 clients trigger routinely, because retrying is what they do.
+    /// Charges the quota by the difference: an overwrite that grows an object reserves only the extra bytes, and one that shrinks it gives bytes back.
+    /// Reserves before writing and releases on failure, so a refused or failed write never leaves a hold behind.
     ///
     /// # Errors
-    /// Returns an error on DB failure.
+    /// Returns a `quota exceeded` error when there is no room, or a DB error.
     pub async fn put_object(
+        db: &DatabaseConnection,
+        bucket_id: i32,
+        key: &str,
+        size: i64,
+        etag: &str,
+        content_type: &str,
+    ) -> ModelResult<Self> {
+        let existing = Self::get(db, bucket_id, key).await?;
+        let previous_size = existing.as_ref().map_or(0, |o| o.size);
+        let delta = size - previous_size;
+        let delta_objects = i64::from(existing.is_none());
+
+        // Only a growing write needs a reservation; a shrink settles directly at the end.
+        let reservation = if delta > 0 {
+            Some(quota::reserve(db, bucket_id, delta).await?)
+        } else {
+            None
+        };
+
+        match Self::write_row(db, bucket_id, key, size, etag, content_type).await {
+            Ok(row) => {
+                if let Some(reservation) = reservation {
+                    quota::commit(db, &reservation, delta_objects).await?;
+                } else {
+                    quota::settle(db, bucket_id, delta, delta_objects).await?;
+                }
+                Ok(row)
+            }
+            Err(e) => {
+                if let Some(reservation) = reservation {
+                    quota::release(db, &reservation).await?;
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// The bare upsert, without any quota accounting.
+    ///
+    /// Tries the update first and only inserts when nothing was updated, then retries the update once if the insert lost a race.
+    /// The previous read-then-insert let two concurrent writes both see no row, both insert, and one hit the unique index with a 500 — which S3 clients trigger routinely, because retrying is what they do.
+    async fn write_row(
         db: &DatabaseConnection,
         bucket_id: i32,
         key: &str,
@@ -105,15 +149,29 @@ impl Model {
             .await?)
     }
 
+    /// Removes an object and returns its bytes to the quota.
+    ///
+    /// Deleting something that is not there is a no-op, not an error — that is `DeleteObject` semantics, and it also keeps a retried delete from double-crediting.
+    ///
     /// # Errors
     /// Returns an error on DB failure.
     pub async fn delete(db: &DatabaseConnection, bucket_id: i32, key: &str) -> ModelResult<()> {
-        Entity::delete_many()
+        let Some(existing) = Self::get(db, bucket_id, key).await? else {
+            return Ok(());
+        };
+
+        let removed = Entity::delete_many()
             .filter(Column::BucketId.eq(bucket_id))
             .filter(Column::ObjectKey.eq(key))
             .exec(db)
             .await?;
-        Ok(())
+
+        // Another caller deleted it between our read and our delete; they credited the quota, not us.
+        if removed.rows_affected == 0 {
+            return Ok(());
+        }
+
+        quota::account_for_delete(db, bucket_id, existing.size).await
     }
 
     /// Objects in a bucket whose key starts with `prefix`, up to `limit`, ordered by key (`ListObjectsV2` backing query).

@@ -58,7 +58,7 @@
   - `pub struct Reservation { pub bucket_id: i32, pub user_id: Option<i32>, pub bytes: i64 }`
   - `ModelError` với thông điệp `"quota exceeded"` khi hết chỗ.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Tạo `tests/models/quota.rs`:
 
@@ -229,12 +229,12 @@ Ghi chú: `buckets::Model::create_system` phải tồn tại — kiểm bằng
 `grep -n "pub async fn create" src/models/buckets.rs` và sửa lời gọi cho khớp API
 thật, hoặc tạo bucket rồi set `user_id = None` bằng tay.
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod models::quota 2>&1 | tail -20`
 Expected: FAIL biên dịch — `unresolved import 'quota'`.
 
-- [ ] **Step 3: Viết module quota**
+- [x] **Step 3: Viết module quota**
 
 Tạo `src/models/quota.rs`:
 
@@ -492,7 +492,7 @@ pub async fn account_for_delete(
 
 Thêm `pub mod quota;` vào `src/models/mod.rs`.
 
-- [ ] **Step 4: Chạy test ba backend**
+- [x] **Step 4: Chạy test ba backend**
 
 ```bash
 cargo test --test mod models::quota 2>&1 | tail -20
@@ -503,7 +503,7 @@ DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test --test mod mod
 Expected: PASS cả bảy test trên cả ba backend. Test đua là cái quan trọng nhất —
 nếu nó fail trên một backend thì guard chưa nằm trong `UPDATE`.
 
-- [ ] **Step 5: Clippy và commit**
+- [x] **Step 5: Clippy và commit**
 
 ```bash
 cargo clippy --all-targets 2>&1 | tail -10
@@ -528,7 +528,7 @@ which is atomic on all three backends and needs no lock."
 - Consumes: `quota::reserve`, `quota::commit`, `quota::release`, `quota::account_for_delete` (task 1).
 - Produces: `objects::Model::put_object` giữ chỗ trước và commit sau; `objects::Model::delete` trừ counter.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Thêm vào `tests/models/quota.rs`:
 
@@ -644,12 +644,12 @@ async fn deleting_a_missing_object_changes_nothing() {
 
 Thêm import `objects` vào đầu file test.
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod models::quota::put_object 2>&1 | tail -20`
 Expected: FAIL — `used_bytes` bằng 0, không ai ghi vào.
 
-- [ ] **Step 3: Sửa `put_object`**
+- [x] **Step 3: Sửa `put_object`**
 
 Trong `src/models/objects.rs`, bọc phần ghi bằng quota. Kích thước tính chênh
 lệch, không tính tuyệt đối:
@@ -777,7 +777,7 @@ pub async fn settle(
 }
 ```
 
-- [ ] **Step 4: Sửa `delete`**
+- [x] **Step 4: Sửa `delete`**
 
 ```rust
     /// Removes an object and returns its bytes to the quota.
@@ -807,7 +807,7 @@ pub async fn settle(
 
 Thêm `use super::quota;` vào đầu `src/models/objects.rs`.
 
-- [ ] **Step 5: Chạy test ba backend**
+- [x] **Step 5: Chạy test ba backend**
 
 ```bash
 cargo test --test mod models 2>&1 | tail -10
@@ -818,7 +818,7 @@ DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test --test mod mod
 Expected: PASS. Test cũ trong `tests/models/objects.rs` có thể fail vì bucket
 mặc định có `max_bytes` nhỏ — kiểm và sửa fixture nếu cần, đừng nới guard.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ tests/
@@ -847,7 +847,7 @@ Bối cảnh: guard chống được đua, nhưng không chống được tiến
 reserve và commit. Một reservation mồ côi khoá chỗ mãi mãi. `src/tasks/mod.rs`
 hiện là file rỗng và `register_tasks` chỉ có marker.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Tạo `tests/tasks/reconcile_quota.rs`:
 
@@ -934,12 +934,12 @@ Ghi chú: chữ ký của `loco_rs::testing::prelude::task` khác nhau giữa c�
 bản — kiểm bằng `grep -rn "pub async fn task" ~/.cargo/registry/src/*/loco-rs-0.16.4/src/testing/`
 và sửa lời gọi cho khớp.
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod tasks::reconcile_quota 2>&1 | tail -20`
 Expected: FAIL — `quota::reconcile` chưa tồn tại.
 
-- [ ] **Step 3: Viết `reconcile`**
+- [x] **Step 3: Viết `reconcile`**
 
 Thêm vào `src/models/quota.rs`:
 
@@ -1066,7 +1066,7 @@ Ghi chú `ponytail:` đặt trên `reconcile`:
 // Ceiling: fine up to a few hundred thousand objects; past that use a grouped SUM query, which needs no lock either.
 ```
 
-- [ ] **Step 4: Viết task**
+- [x] **Step 4: Viết task**
 
 Tạo `src/tasks/reconcile_quota.rs`:
 
@@ -1122,7 +1122,7 @@ pub mod reconcile_quota;
 
 Bỏ `#[allow(unused_variables)]` phía trên nếu clippy không còn cần.
 
-- [ ] **Step 5: Chạy test và task thật**
+- [x] **Step 5: Chạy test và task thật**
 
 ```bash
 cargo test --test mod tasks 2>&1 | tail -10
@@ -1132,7 +1132,7 @@ cargo loco task reconcile_quota
 
 Expected: `cargo loco task` liệt kê `reconcile_quota`; chạy nó in ra dòng tổng kết.
 
-- [ ] **Step 6: Ghi tài liệu**
+- [x] **Step 6: Ghi tài liệu**
 
 Thêm vào `README.md`:
 
@@ -1151,7 +1151,7 @@ chạy sẽ mất phần giữ chỗ (commit của nó cộng lại ngay, nhưng
 quota nới lỏng hơn thực tế).
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ tests/ README.md
@@ -1178,7 +1178,7 @@ Guard trong `UPDATE` đã chặn phần lớn đường xuống âm, nhưng CHEC
 nó biến một bug kế toán tương lai thành lỗi ghi ngay tại chỗ thay vì một con số
 âm âm thầm trôi qua API.
 
-- [ ] **Step 1: Viết migration**
+- [x] **Step 1: Viết migration**
 
 Tạo `migration/src/m20260817_000006_quota_checks.rs`:
 
@@ -1250,7 +1250,7 @@ rồi bỏ qua. Ràng buộc dự án là >= 8.0.13, nên trên 8.0.13–8.0.15 
 tại mà không có tác dụng. Không sao — nó là lưới cuối, không phải cơ chế chính.
 Ghi lại điều này ngay trong migration bằng một comment.
 
-- [ ] **Step 2: Chạy migration ba backend**
+- [x] **Step 2: Chạy migration ba backend**
 
 ```bash
 DB_TYPE=postgres cargo loco db reset && cargo test 2>&1 | tail -5
@@ -1258,7 +1258,7 @@ DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test 2>&1 | tail -5
 DATABASE_URL=sqlite::memory: cargo test 2>&1 | tail -5
 ```
 
-- [ ] **Step 3: Kiểm CHECK thật sự chặn**
+- [x] **Step 3: Kiểm CHECK thật sự chặn**
 
 ```bash
 psql postgres://loco:loco@localhost:5432/osg_development -c \
@@ -1267,7 +1267,7 @@ psql postgres://loco:loco@localhost:5432/osg_development -c \
 
 Expected: lỗi vi phạm constraint.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add migration/

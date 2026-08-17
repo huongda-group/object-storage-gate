@@ -164,6 +164,28 @@ be absolute or contain `..`.
 | `access_key_prefixes` | per-key prefix confinement — the "one key, one folder" rule |
 | `objects` | metadata per `(bucket_id, object_key)`: `size`, `etag`, `content_type`, timestamps. Quota reads from here, never from scanning the bucket |
 
+### Quota
+
+Every write is reserve → write → commit, and releases the reservation if the
+write fails. Each step is a single `UPDATE ... WHERE <guard>` plus a
+`rows_affected` check — atomic on all three backends, and the reason no lock
+appears in `src/models/quota.rs`. Two levels are charged: the bucket and, when
+it has an owner, the account. `max_bytes = 0` means unlimited at either level.
+
+An overwrite charges the difference: growing an object reserves only the extra
+bytes, shrinking one gives bytes back.
+
+The counters are an optimisation; the `objects` rows are the truth. A process
+that dies between reserve and commit leaves a hold nothing releases, so run the
+reconcile pass on a schedule, off-peak:
+
+```sh
+cargo loco task reconcile_quota
+```
+
+It clears `reserved_bytes` outright, so an upload in flight loses its hold — its
+commit re-adds the bytes, but the window is briefly permissive.
+
 Two credential systems, deliberately separate:
 
 - **JWT** authenticates humans in the console (`/api/auth/*`). There is no

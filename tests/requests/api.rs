@@ -1,5 +1,6 @@
 use loco_rs::{testing::prelude::*, TestServer};
-use object_storage_gate::app::App;
+use object_storage_gate::{app::App, models::_entities::users, views::auth::LoginResponse};
+use sea_orm::{ActiveModelTrait, ActiveValue};
 use serial_test::serial;
 
 use super::prepare_data;
@@ -118,6 +119,94 @@ async fn usage_and_buckets_report_the_account() {
         let body: serde_json::Value = usage.json();
         assert_eq!(body["bucket_count"], 1);
         assert_eq!(body["used_bytes"], 0);
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn caller_is_blocked_until_temp_password_is_changed() {
+    request::<App, _, _>(|request, ctx| async move {
+        let user = prepare_data::init_user_login(&request, &ctx).await;
+
+        // Flip the flag the way an admin-created account would arrive.
+        let mut am: users::ActiveModel = user.user.clone().into();
+        am.must_change_password = ActiveValue::set(true);
+        am.update(&ctx.db).await.unwrap();
+
+        let (k, v) = prepare_data::auth_header(&user.token);
+        let blocked = request.get("/api/keys").add_header(k, v).await;
+        assert_eq!(blocked.status_code(), 403);
+        assert!(blocked.text().contains("password_change_required"));
+
+        // The change-password endpoint itself must stay reachable.
+        let (k, v) = prepare_data::auth_header(&user.token);
+        let allowed = request
+            .post("/api/me/password")
+            .add_header(k, v)
+            .json(&serde_json::json!({
+                "current_password": "12341234",
+                "new_password": "a-much-better-secret"
+            }))
+            .await;
+        assert_eq!(allowed.status_code(), 200);
+
+        // And after changing it, everything else opens up again.
+        let login = request
+            .post("/api/auth/login")
+            .json(&serde_json::json!({
+                "email": "test@loco.com",
+                "password": "a-much-better-secret"
+            }))
+            .await;
+        let fresh: LoginResponse = serde_json::from_str(&login.text()).unwrap();
+        assert!(!fresh.must_change_password);
+
+        let (k, v) = prepare_data::auth_header(&fresh.token);
+        let ok = request.get("/api/keys").add_header(k, v).await;
+        assert_eq!(ok.status_code(), 200);
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn change_password_rejects_wrong_current_password() {
+    request::<App, _, _>(|request, ctx| async move {
+        let user = prepare_data::init_user_login(&request, &ctx).await;
+        let (k, v) = prepare_data::auth_header(&user.token);
+
+        let res = request
+            .post("/api/me/password")
+            .add_header(k, v)
+            .json(&serde_json::json!({
+                "current_password": "not-the-password",
+                "new_password": "a-much-better-secret"
+            }))
+            .await;
+
+        assert_eq!(res.status_code(), 401);
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn change_password_rejects_short_password() {
+    request::<App, _, _>(|request, ctx| async move {
+        let user = prepare_data::init_user_login(&request, &ctx).await;
+        let (k, v) = prepare_data::auth_header(&user.token);
+
+        let res = request
+            .post("/api/me/password")
+            .add_header(k, v)
+            .json(&serde_json::json!({
+                "current_password": "12341234",
+                "new_password": "short"
+            }))
+            .await;
+
+        assert_eq!(res.status_code(), 400);
     })
     .await;
 }

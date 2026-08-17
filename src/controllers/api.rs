@@ -4,6 +4,8 @@
 //! Every endpoint accepts either the console's JWT or a personal access token (PAT) — see `Caller`.
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use axum::http::StatusCode;
+use loco_rs::controller::ErrorDetail;
 use loco_rs::prelude::*;
 use sea_orm::prelude::DateTimeWithTimeZone;
 use serde::{Deserialize, Serialize};
@@ -16,14 +18,14 @@ use crate::{
     },
 };
 
-/// Whoever is calling, already resolved to a user.
+/// Whoever is calling, already resolved to a user, with no policy applied.
 ///
-/// A console session (JWT) and a service token (PAT) reach the same endpoints with the same powers: the console could already create, rotate and revoke keys over JWT, so refusing JWT on a separate management tree would have fenced off nothing.
-pub struct Caller {
+/// Only the change-password endpoint uses this directly: a user holding a temporary password must be able to replace it while every other endpoint is closed to them.
+pub struct RawCaller {
     pub user: users::Model,
 }
 
-impl<S> FromRequestParts<S> for Caller
+impl<S> FromRequestParts<S> for RawCaller
 where
     AppContext: FromRef<S>,
     S: Send + Sync,
@@ -43,6 +45,62 @@ where
 
         let token = auth::ApiToken::<users::Model>::from_request_parts(parts, state).await?;
         Ok(Self { user: token.user })
+    }
+}
+
+/// A caller who is allowed to use the account API.
+///
+/// A console session (JWT) and a service token (PAT) reach the same endpoints with the same powers: the console could already create, rotate and revoke keys over JWT, so refusing JWT on a separate management tree would have fenced off nothing.
+/// A user still holding an admin-issued temporary password is refused here until they change it.
+pub struct Caller {
+    pub user: users::Model,
+}
+
+impl<S> FromRequestParts<S> for Caller
+where
+    AppContext: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = Error;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Error> {
+        let RawCaller { user } = RawCaller::from_request_parts(parts, state).await?;
+        if user.must_change_password {
+            return Err(Error::CustomError(
+                StatusCode::FORBIDDEN,
+                ErrorDetail::new(
+                    "password_change_required",
+                    "change the temporary password before using the API",
+                ),
+            ));
+        }
+        Ok(Self { user })
+    }
+}
+
+/// A caller who is additionally an admin.
+///
+/// This is the only server-side admin gate; the console's role check is a UX affordance and must never be the model.
+pub struct AdminCaller {
+    pub user: users::Model,
+}
+
+impl<S> FromRequestParts<S> for AdminCaller
+where
+    AppContext: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = Error;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Error> {
+        let Caller { user } = Caller::from_request_parts(parts, state).await?;
+        if !user.is_admin() {
+            return Err(Error::CustomError(
+                StatusCode::FORBIDDEN,
+                ErrorDetail::new("admin_required", "this endpoint requires an admin account"),
+            ));
+        }
+        Ok(Self { user })
     }
 }
 
@@ -219,10 +277,38 @@ async fn token_rotate(caller: Caller, State(ctx): State<AppContext>) -> Result<R
     format::json(TokenResponse { token })
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ChangePasswordParams {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// Lets a user replace their own password, including the temporary one an admin issued.
+/// Uses `RawCaller` on purpose: this is the one endpoint that stays open while `must_change_password` is set.
+#[debug_handler]
+async fn change_password(
+    caller: RawCaller,
+    State(ctx): State<AppContext>,
+    Json(params): Json<ChangePasswordParams>,
+) -> Result<Response> {
+    if !caller.user.verify_password(&params.current_password) {
+        return Err(Error::Unauthorized("current password is wrong".to_string()));
+    }
+    crate::models::users::validate_password(&params.new_password)
+        .map_err(|e| Error::BadRequest(e.to_string()))?;
+
+    let am: crate::models::users::ActiveModel = caller.user.into();
+    am.set_password(&ctx.db, &params.new_password, false)
+        .await?;
+
+    format::json(())
+}
+
 pub fn routes() -> Routes {
     Routes::new()
         .prefix("/api")
         .add("/whoami", get(whoami))
+        .add("/me/password", post(change_password))
         .add("/keys", get(list_keys).post(create_key))
         .add(
             "/keys/{pid}",

@@ -22,6 +22,28 @@ impl Model {
     }
 }
 
+/// Shortest password the API will accept.
+/// The starter allowed four characters, which is not a password.
+pub const MIN_PASSWORD_LEN: usize = 8;
+
+/// Longest password the API will accept, so a multi-megabyte body cannot reach Argon2.
+pub const MAX_PASSWORD_LEN: usize = 256;
+
+/// Validates a password before it is hashed.
+///
+/// # Errors
+///
+/// Returns a message error when the password is too short or too long.
+pub fn validate_password(password: &str) -> ModelResult<()> {
+    if password.len() < MIN_PASSWORD_LEN {
+        return Err(ModelError::msg("password must be at least 8 characters"));
+    }
+    if password.len() > MAX_PASSWORD_LEN {
+        return Err(ModelError::msg("password must be at most 256 characters"));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct LoginParams {
     pub email: String,
@@ -216,12 +238,28 @@ impl ActiveModel {
     ///
     /// when has DB query error or could not hash the given password
     pub async fn reset_password(
-        mut self,
+        self,
         db: &DatabaseConnection,
         password: &str,
     ) -> ModelResult<Model> {
+        self.set_password(db, password, false).await
+    }
+
+    /// Replaces the password hash and sets whether the user must change it at next login.
+    /// An admin-issued temporary password passes `must_change = true`; a self-service change passes `false`.
+    ///
+    /// # Errors
+    ///
+    /// when has DB query error or could not hash the given password
+    pub async fn set_password(
+        mut self,
+        db: &DatabaseConnection,
+        password: &str,
+        must_change: bool,
+    ) -> ModelResult<Model> {
         self.password =
             ActiveValue::set(hash::hash_password(password).map_err(|e| ModelError::Any(e.into()))?);
+        self.must_change_password = ActiveValue::set(must_change);
         self.update(db).await.map_err(ModelError::from)
     }
 }

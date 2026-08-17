@@ -81,22 +81,14 @@ Repository secrets it needs:
 
 | Secret | Value |
 |---|---|
-| `DOCKERHUB_USERNAME` | Docker Hub account the workflow logs in as |
+| `DOCKERHUB_USERNAME` | Docker Hub account — the login, and the image namespace |
 | `DOCKERHUB_TOKEN` | access token from Docker Hub → Account Settings → Personal access tokens |
 
-The published name is `<namespace>/object-storage-gate`, and the namespace is
-independent of the login account:
-
-| Where | Setting | Result |
-|---|---|---|
-| nothing set | — | `<DOCKERHUB_USERNAME>/object-storage-gate` |
-| repo **variable** `DOCKERHUB_NAMESPACE` | e.g. `hdg` | `hdg/object-storage-gate` |
-| workflow `env.IMAGE_NAME` | e.g. `osg-gateway` | `<namespace>/osg-gateway` |
-
-Set the variable under Settings → Secrets and variables → Actions → *Variables*
-(not Secrets). The login token must be allowed to push there: for an org
-namespace that means the account is an org member with write access to the repo,
-or the token is an org access token.
+The published name is `<DOCKERHUB_USERNAME>/object-storage-gate`. Change
+`IMAGE_NAME` in the workflow to rename the repository half; publishing under a
+different account means changing the two secrets. Docker Hub has no way to drop
+the namespace — an unprefixed name resolves to `library/`, which only Docker's
+own official images use.
 
 Tags produced from `1.2.3`: `1.2.3`, `1.2`, and `latest`.
 

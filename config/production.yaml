@@ -12,6 +12,21 @@ server:
   middlewares:
     fallback:
       enable: false
+    # loco defaults this to 2 MB. An object-storage gateway must accept multi-gigabyte
+    # uploads, and S3 multipart parts have a 5 MB minimum, so a framework-wide cap is the
+    # wrong place to enforce anything. The real per-route cap belongs in the S3 handler.
+    limit_payload:
+      body_limit: disable
+    # Generous on purpose: a 5 GiB upload over a slow link is a legitimate request.
+    timeout_request:
+      enable: true
+      timeout: 300000
+    # `enable` is required: the preset alone is inert, because loco's is_enabled() reads
+    # only this flag. The console keeps its JWT in localStorage, so a CSP is what limits the
+    # damage of an XSS there.
+    secure_headers:
+      enable: true
+      preset: github
     static:
       enable: true
       must_exist: true

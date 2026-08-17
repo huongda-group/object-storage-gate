@@ -210,3 +210,33 @@ async fn change_password_rejects_short_password() {
     })
     .await;
 }
+
+/// loco's default body limit is 2 MB, which would reject every real S3 upload once the
+/// gateway lands, including every multipart part (5 MB minimum per the S3 spec).
+/// A 413 here means the middleware ate the body before any handler saw it.
+#[tokio::test]
+#[serial]
+async fn body_limit_is_disabled() {
+    request::<App, _, _>(|request, ctx| async move {
+        let user = prepare_data::init_user_login(&request, &ctx).await;
+        let (k, v) = prepare_data::auth_header(&user.token);
+
+        let big_label = "x".repeat(3_000_000);
+        let res = request
+            .post("/api/keys")
+            .add_header(k, v)
+            .json(&serde_json::json!({
+                "label": big_label,
+                "permissions": ["read"],
+                "prefixes": []
+            }))
+            .await;
+
+        assert_ne!(
+            res.status_code(),
+            413,
+            "payload limit middleware is still on"
+        );
+    })
+    .await;
+}

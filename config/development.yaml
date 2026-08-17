@@ -26,6 +26,10 @@ server:
   middlewares:
     fallback:
       enable: false
+    # Mirrors production: loco's 2 MB default would reject every real S3 upload, and a test
+    # suite that does not share the production limit proves nothing about it.
+    limit_payload:
+      body_limit: disable
     static:
       enable: true
       must_exist: true

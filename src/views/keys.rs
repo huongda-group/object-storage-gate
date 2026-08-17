@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::access_keys;
 
-/// Fields are listed by hand on purpose: `secret_encrypted` must never reach a
-/// response, and a `#[serde(skip)]` on the generated entity would be wiped by
-/// the next `cargo loco db entities`.
+/// Fields are listed by hand on purpose: `secret_encrypted` must never reach a response, and a `#[serde(skip)]` on the generated entity would be wiped by the next `cargo loco db entities`.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct KeyResponse {
     pub pid: String,

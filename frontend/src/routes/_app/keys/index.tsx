@@ -1,7 +1,5 @@
 // Ported from console-object-storage-gate/project/Access Keys.dc.html.
-// The prototype opens the secret modal straight from "Tạo access key"; the create
-// form here follows docs/ui/admin-ui-spec.md §6.5 (label, preset, prefix, expiry)
-// using the same form-modal chrome as the other screens.
+// The prototype opens the secret modal straight from "Tạo access key"; the create form here follows docs/ui/admin-ui-spec.md §6.5 (label, preset, prefix, expiry) using the same form-modal chrome as the other screens.
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Header } from "../../../components/Header";

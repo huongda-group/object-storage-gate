@@ -1,5 +1,4 @@
-// Small shared pieces lifted from the prototypes: quota bars, status pills,
-// copy buttons, page/panel chrome.
+// Small shared pieces lifted from the prototypes: quota bars, status pills, copy buttons, page/panel chrome.
 import type React from "react";
 import { useState } from "react";
 import type { PillView, QuotaView } from "../lib/format";
@@ -7,9 +6,8 @@ import type { UNITS } from "../lib/mock";
 import { useToast } from "./Toast";
 
 /**
- * Row action menu (`⋯`). The table scrolls horizontally, so an absolutely
- * positioned menu would clip — the prototypes measure the button and place the
- * menu with `position: fixed`, which is what this reproduces.
+ * Row action menu (`⋯`).
+ * The table scrolls horizontally, so an absolutely positioned menu would clip — the prototypes measure the button and place the menu with `position: fixed`, which is what this reproduces.
  */
 export function useRowMenu() {
   const [open, setOpen] = useState<string | null>(null);

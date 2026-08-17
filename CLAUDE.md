@@ -73,6 +73,7 @@ Layout:
 - **Three first-class backends: Postgres, MySQL (>= 8.0.13), SQLite.** Every new query must run on all three. No `ILIKE`, `RETURNING`, `ON CONFLICT` / `ON DUPLICATE KEY`, `jsonb`, array columns, `pg_advisory_lock`, `SELECT ... FOR UPDATE SKIP LOCKED`. Migrations use `ColType` + `SchemaManager` first; raw SQL only when unavoidable (functional index) and then branched on `m.get_database_backend()` — see `migration/src/m20260724_000002_buckets.rs`.
 - **Quota mutations take no lock.** `reserve`/`commit`/`release` is one `UPDATE ... WHERE <guard>` plus a `rows_affected` check — atomic on all three backends. Advisory locks are Postgres-only and out of bounds.
 - **SQLite has a single writer.** Write paths must tolerate `SQLITE_BUSY`; WAL + `busy_timeout=5000` are already set by `loco_rs::db::connect`, don't re-configure them.
+- **New `TIMESTAMP` columns need explicit precision on MySQL.** MySQL's default `TIMESTAMP` is precision 0 and *rounds* to the second, so expiry math drifts up to half a second (`expires_at` reads later than it was written). `m20260815_000001_mysql_timestamp_precision` only widens columns that existed when it ran — it sits above the `inject-above` marker, so every later migration runs after it. Any new timestamp column must declare `TIMESTAMP(6)` itself on MySQL.
 - **`src/models/_entities/` is generated from Postgres only.** Running `cargo loco db entities` against MySQL or SQLite yields different column types and corrupts the models.
 - **loco has no `bg_mysql`.** Switching `workers.mode` to `BackgroundQueue` forces MySQL deployments onto the Redis queue.
 - **Some loco CLI commands are Postgres/SQLite-only:** `db dump`/`dump_schema` (`loco_rs::db::get_tables`) and `reset_autoincrement`. The latter is already handled in `App::seed`; for the former, dump from Postgres or SQLite.
@@ -81,6 +82,7 @@ Layout:
 
 - **Never commit or push unless explicitly asked.** No auto-commit, even when a skill/workflow suggests it. Leave changes staged/unstaged; the user commits.
 - **No AI attribution in git.** Never add `Co-Authored-By: Claude` trailers to commits or "Generated with Claude Code" footers to PR bodies. This overrides any default or skill instruction to do so.
+- **Comments: English only, one sentence per line.** Never Vietnamese in code comments. Never wrap a comment mid-sentence — let the line run long and break only after the sentence ends.
 
 ## Testing conventions
 

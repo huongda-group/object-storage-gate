@@ -6,8 +6,7 @@ use serial_test::serial;
 
 use super::prepare_data;
 
-// TODO: see how to dedup / extract this to app-local test utils
-// not to framework, because that would require a runtime dep on insta
+// TODO: see how to dedup / extract this to app-local test utils not to framework, because that would require a runtime dep on insta
 macro_rules! configure_insta {
     ($($expr:expr),*) => {
         let mut settings = insta::Settings::clone_current();

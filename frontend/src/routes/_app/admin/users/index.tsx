@@ -1,6 +1,5 @@
 // Ported from console-object-storage-gate/project/Admin Users.dc.html.
-// The mock users have no pid, so the detail route is keyed by email until
-// slice #7 returns real pids from GET /api/admin/users.
+// The mock users have no pid, so the detail route is keyed by email until slice #7 returns real pids from GET /api/admin/users.
 import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { Header } from "../../../../components/Header";

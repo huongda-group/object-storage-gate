@@ -1,17 +1,16 @@
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
-/// `MySQL`-only: nâng mọi cột `TIMESTAMP` lên `TIMESTAMP(6)`.
+/// `MySQL`-only: widen every `TIMESTAMP` column to `TIMESTAMP(6)`.
 ///
-/// `TIMESTAMP` của `MySQL` mặc định precision 0 — nó *làm tròn* tới giây, kể cả
-/// làm tròn lên. Postgres `timestamptz` và `SQLite` (lưu chuỗi ISO) đều giữ phần
-/// thập phân, nên cùng một dòng code sẽ cho kết quả lệch tới nửa giây trên
-/// `MySQL`: `expires_at` đọc ra xa hơn lúc ghi, `days_until_expiry()` nhảy một
-/// ngày, magic link hết hạn trễ hơn trần đã tính.
+/// `MySQL`'s `TIMESTAMP` defaults to precision 0 — it *rounds* to the second, including rounding up.
+/// Postgres `timestamptz` and `SQLite` (which stores ISO strings) both keep the fractional part, so the same line of code drifts by up to half a second on `MySQL`: `expires_at` reads later than it was written, `days_until_expiry()` jumps a day, magic links expire later than the computed ceiling.
 ///
-/// Duyệt `information_schema` thay vì liệt kê tay từng cột: cột timestamp nằm
-/// rải khắp `users`, `access_keys`, `buckets`, `objects`... và migration sau này
-/// thêm cột mới cũng vẫn đi qua đây khi chạy trên DB trắng.
+/// Scan `information_schema` instead of listing every column by hand: timestamp columns are scattered across `users`, `access_keys`, `buckets`, `objects`... and columns added by later migrations still pass through here when this runs on a blank DB.
+///
+/// Only columns that exist when this migration runs can be patched.
+/// Migrations generated later sit below the `inject-above` marker in `lib.rs`, meaning they run *after* it, so new `TIMESTAMP` columns come back at precision 0 and the rounding bug returns.
+/// Timestamp columns added later must declare `TIMESTAMP(6)` themselves on `MySQL` — or copy this whole scan block into that migration.
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
@@ -46,8 +45,7 @@ impl MigrationTrait for Migration {
                 " NOT NULL"
             });
             if let Some(default) = default {
-                // CURRENT_TIMESTAMP phải khớp precision của cột, không thì MySQL
-                // từ chối; giá trị hằng thì bọc nháy.
+                // CURRENT_TIMESTAMP must match the column's precision, otherwise MySQL rejects it; constant values get quoted.
                 if default.to_uppercase().starts_with("CURRENT_TIMESTAMP") {
                     sql.push_str(" DEFAULT CURRENT_TIMESTAMP(6)");
                 } else {
@@ -56,9 +54,8 @@ impl MigrationTrait for Migration {
                     sql.push('\'');
                 }
             }
-            // EXTRA gộp nhiều thứ, phần lớn không phải DDL hợp lệ (MySQL 8 nhét
-            // cả "DEFAULT_GENERATED" vô đây). Chỉ mệnh đề ON UPDATE là cần giữ,
-            // và nó phải khớp precision mới của cột.
+            // EXTRA lumps several things together, most of them not valid DDL (MySQL 8 stuffs "DEFAULT_GENERATED" in here too).
+            // Only the ON UPDATE clause needs to be kept, and it must match the column's new precision.
             if extra.to_lowercase().contains("on update") {
                 sql.push_str(" ON UPDATE CURRENT_TIMESTAMP(6)");
             }
@@ -68,7 +65,7 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, _m: &SchemaManager) -> Result<(), DbErr> {
-        // Hạ lại precision chỉ làm mất dữ liệu chứ không phục hồi gì — no-op.
+        // Lowering the precision back only loses data without restoring anything — no-op.
         Ok(())
     }
 }

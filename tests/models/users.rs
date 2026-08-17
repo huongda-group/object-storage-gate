@@ -369,7 +369,8 @@ async fn seed_leaves_id_sequence_past_fixtures() {
         .await
         .expect("seed must work on every supported backend");
 
-    // src/fixtures/users.yaml có 2 dòng, id 1 và 2. User mới không được đụng id đã dùng.
+    // src/fixtures/users.yaml has 2 rows, id 1 and 2.
+    // A new user must not touch an already-used id.
     let fresh = users::ActiveModel {
         email: ActiveValue::set("fresh@example.com".to_string()),
         password: ActiveValue::set("x".to_string()),

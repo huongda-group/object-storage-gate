@@ -22,21 +22,16 @@ impl MigrationTrait for Migration {
                 ("reserved_bytes", ColType::BigIntegerWithDefault(0)),
                 ("object_count", ColType::BigIntegerWithDefault(0)),
             ],
-            // `users?` = nullable owner: a NULL user_id is a system pool, the
-            // gateway-wide bucket the admin Pool screen lists as "hệ thống".
-            // ponytail: FK is ON DELETE SET NULL, so deleting a user would turn
-            // their buckets into system pools — the delete-user API must drop the
-            // user's buckets first (slice #7).
+            // `users?` = nullable owner: a NULL user_id is a system pool, the gateway-wide bucket the admin Pool screen lists as "hệ thống".
+            // ponytail: FK is ON DELETE SET NULL, so deleting a user would turn their buckets into system pools — the delete-user API must drop the user's buckets first (slice #7).
             &[("users?", "")],
         )
         .await?;
-        // Unique per owner. COALESCE, not a plain (user_id, name) index: NULLs
-        // compare distinct, which would let two system pools share a name. 0 is a
-        // safe sentinel because user ids start at 1.
+        // Unique per owner.
+        // COALESCE, not a plain (user_id, name) index: NULLs compare distinct, which would let two system pools share a name.
+        // 0 is a safe sentinel because user ids start at 1.
         //
-        // Functional index → sea-query dựng không được, phải viết SQL thô và branch:
-        // MySQL bắt buộc bọc biểu thức trong ngoặc kép và không có `IF NOT EXISTS`
-        // cho index (nên guard bằng `has_index`).
+        // Functional index → sea-query cannot build it, so it takes raw SQL and a branch: MySQL requires wrapping the expression in double parentheses and has no `IF NOT EXISTS` for indexes (hence the `has_index` guard).
         if !m.has_index("buckets", IDX_BUCKETS_OWNER_NAME).await? {
             let sql = match m.get_database_backend() {
                 DatabaseBackend::MySql => format!(

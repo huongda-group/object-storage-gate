@@ -16,7 +16,7 @@ impl MigrationTrait for Migration {
             &[("access_keys", "")],
         )
         .await?;
-        // `has_index` thay cho `IF NOT EXISTS`: MySQL không có cú pháp đó cho index.
+        // `has_index` instead of `IF NOT EXISTS`: MySQL has no such syntax for indexes.
         if !m
             .has_index("access_key_permissions", IDX_AKP_KEY_ACTION)
             .await?

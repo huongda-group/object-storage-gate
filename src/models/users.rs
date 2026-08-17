@@ -21,7 +21,7 @@ impl Model {
 
     /// Account-wide quota unlimited when `max_bytes == 0`.
     #[must_use]
-    pub fn is_unlimited(&self) -> bool {
+    pub const fn is_unlimited(&self) -> bool {
         self.max_bytes == 0
     }
 }
@@ -229,8 +229,7 @@ impl Model {
         hash::verify_password(password, &self.password)
     }
 
-    /// Asynchronously creates a user with a password and saves it to the
-    /// database.
+    /// Asynchronously creates a user with a password and saves it to the database.
     ///
     /// # Errors
     ///
@@ -257,9 +256,9 @@ impl Model {
         let password_hash =
             hash::hash_password(&params.password).map_err(|e| ModelError::Any(e.into()))?;
         let user = users::ActiveModel {
-            email: ActiveValue::set(params.email.to_string()),
+            email: ActiveValue::set(params.email.clone()),
             password: ActiveValue::set(password_hash),
-            name: ActiveValue::set(params.name.to_string()),
+            name: ActiveValue::set(params.name.clone()),
             ..Default::default()
         }
         .insert(&txn)
@@ -270,8 +269,7 @@ impl Model {
         Ok(user)
     }
 
-    /// Returns whether the instance has no user at all, i.e. it still needs its
-    /// first-run admin setup.
+    /// Returns whether the instance has no user at all, i.e. it still needs its first-run admin setup.
     ///
     /// # Errors
     ///
@@ -280,8 +278,8 @@ impl Model {
         Ok(users::Entity::find().one(db).await?.is_some())
     }
 
-    /// Creates the first-run admin: an admin-role user, verified up front so no
-    /// mail round-trip is needed to log in. Refused once any user exists.
+    /// Creates the first-run admin: an admin-role user, verified up front so no mail round-trip is needed to log in.
+    /// Refused once any user exists.
     ///
     /// # Errors
     ///
@@ -292,9 +290,8 @@ impl Model {
     ) -> ModelResult<Self> {
         let txn = db.begin().await?;
 
-        // ponytail: read-committed lets two concurrent setup calls on a
-        // brand-new empty DB both see zero users and both become admin. Take a
-        // lock (advisory / sentinel row) if that window ever matters.
+        // ponytail: read-committed lets two concurrent setup calls on a brand-new empty DB both see zero users and both become admin.
+        // Take a lock (advisory / sentinel row) if that window ever matters.
         if users::Entity::find().one(&txn).await?.is_some() {
             return Err(ModelError::EntityAlreadyExists {});
         }
@@ -302,9 +299,9 @@ impl Model {
         let password_hash =
             hash::hash_password(&params.password).map_err(|e| ModelError::Any(e.into()))?;
         let user = users::ActiveModel {
-            email: ActiveValue::set(params.email.to_string()),
+            email: ActiveValue::set(params.email.clone()),
             password: ActiveValue::set(password_hash),
-            name: ActiveValue::set(params.name.to_string()),
+            name: ActiveValue::set(params.name.clone()),
             role: ActiveValue::set(ROLE_ADMIN.to_string()),
             email_verified_at: ActiveValue::set(Some(Local::now().into())),
             ..Default::default()
@@ -330,11 +327,9 @@ impl Model {
 }
 
 impl ActiveModel {
-    /// Sets the email verification information for the user and
-    /// updates it in the database.
+    /// Sets the email verification information for the user and updates it in the database.
     ///
-    /// This method is used to record the timestamp when the email verification
-    /// was sent and generate a unique verification token for the user.
+    /// This method is used to record the timestamp when the email verification was sent and generate a unique verification token for the user.
     ///
     /// # Errors
     ///
@@ -348,12 +343,9 @@ impl ActiveModel {
         self.update(db).await.map_err(ModelError::from)
     }
 
-    /// Sets the information for a reset password request,
-    /// generates a unique reset password token, and updates it in the
-    /// database.
+    /// Sets the information for a reset password request, generates a unique reset password token, and updates it in the database.
     ///
-    /// This method records the timestamp when the reset password token is sent
-    /// and generates a unique token for the user.
+    /// This method records the timestamp when the reset password token is sent and generates a unique token for the user.
     ///
     /// # Arguments
     ///
@@ -366,11 +358,9 @@ impl ActiveModel {
         self.update(db).await.map_err(ModelError::from)
     }
 
-    /// Records the verification time when a user verifies their
-    /// email and updates it in the database.
+    /// Records the verification time when a user verifies their email and updates it in the database.
     ///
-    /// This method sets the timestamp when the user successfully verifies their
-    /// email.
+    /// This method sets the timestamp when the user successfully verifies their email.
     ///
     /// # Errors
     ///
@@ -380,11 +370,9 @@ impl ActiveModel {
         self.update(db).await.map_err(ModelError::from)
     }
 
-    /// Resets the current user password with a new password and
-    /// updates it in the database.
+    /// Resets the current user password with a new password and updates it in the database.
     ///
-    /// This method hashes the provided password and sets it as the new password
-    /// for the user.
+    /// This method hashes the provided password and sets it as the new password for the user.
     ///
     /// # Errors
     ///
@@ -403,8 +391,8 @@ impl ActiveModel {
 
     /// Creates a magic link token for passwordless authentication.
     ///
-    /// Generates a random token with a specified length and sets an expiration time
-    /// for the magic link. This method is used to initiate the magic link authentication flow.
+    /// Generates a random token with a specified length and sets an expiration time for the magic link.
+    /// This method is used to initiate the magic link authentication flow.
     ///
     /// # Errors
     /// - Returns an error if database update fails
@@ -419,8 +407,7 @@ impl ActiveModel {
 
     /// Verifies and invalidates the magic link after successful authentication.
     ///
-    /// Clears the magic link token and expiration time after the user has
-    /// successfully authenticated using the magic link.
+    /// Clears the magic link token and expiration time after the user has successfully authenticated using the magic link.
     ///
     /// # Errors
     /// - Returns an error if database update fails

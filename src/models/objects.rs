@@ -21,8 +21,7 @@ impl ActiveModelBehavior for super::_entities::objects::ActiveModel {
 }
 
 impl Model {
-    /// Insert a new object or overwrite the existing `(bucket_id, key)` row
-    /// (PutObject semantics, versioning off).
+    /// Insert a new object or overwrite the existing `(bucket_id, key)` row (`PutObject` semantics, versioning off).
     ///
     /// # Errors
     /// Returns an error on DB failure.
@@ -78,8 +77,7 @@ impl Model {
         Ok(())
     }
 
-    /// Objects in a bucket whose key starts with `prefix`, up to `limit`,
-    /// ordered by key (ListObjectsV2 backing query).
+    /// Objects in a bucket whose key starts with `prefix`, up to `limit`, ordered by key (`ListObjectsV2` backing query).
     ///
     /// # Errors
     /// Returns an error on DB failure.

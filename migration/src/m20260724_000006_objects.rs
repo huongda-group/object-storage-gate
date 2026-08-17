@@ -26,7 +26,7 @@ impl MigrationTrait for Migration {
             &[("buckets", "")],
         )
         .await?;
-        // `has_index` thay cho `IF NOT EXISTS`: MySQL không có cú pháp đó cho index.
+        // `has_index` instead of `IF NOT EXISTS`: MySQL has no such syntax for indexes.
         if !m.has_index("objects", IDX_OBJECTS_BUCKET_KEY).await? {
             m.create_index(
                 Index::create()

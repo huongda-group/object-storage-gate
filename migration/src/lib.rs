@@ -14,6 +14,7 @@ mod m20260817_000001_auth_teardown;
 mod m20260817_000002_hash_api_key;
 mod m20260817_000003_column_lengths;
 mod m20260817_000004_binary_collation;
+mod m20260817_000005_hot_indexes;
 
 pub struct Migrator;
 
@@ -34,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260817_000002_hash_api_key::Migration),
             Box::new(m20260817_000003_column_lengths::Migration),
             Box::new(m20260817_000004_binary_collation::Migration),
+            Box::new(m20260817_000005_hot_indexes::Migration),
             // inject-above (do not remove this comment)
         ]
     }

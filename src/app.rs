@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use loco_rs::{
     app::{AppContext, Hooks, Initializer},
     bgworker::{BackgroundWorker, Queue},
@@ -59,6 +60,16 @@ impl Hooks for App {
                 )
             })?;
             crate::models::crypto::validate_master_key(&key)?;
+
+            // loco signs JWTs with `EncodingKey::from_base64_secret`, so a JWT_SECRET that is not
+            // valid base64 lets the app boot and then fails every single login with a generic
+            // "unauthorized!" — indistinguishable from a wrong password. Refuse at boot instead.
+            let jwt = ctx.config.get_jwt_config()?;
+            STANDARD.decode(jwt.secret.trim()).map_err(|_| {
+                Error::string(
+                    "JWT_SECRET must be base64 (loco signs with from_base64_secret); generate one with `openssl rand -base64 32`",
+                )
+            })?;
         }
         Ok(ctx)
     }

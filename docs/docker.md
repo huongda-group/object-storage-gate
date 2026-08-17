@@ -34,7 +34,7 @@ without them:
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | full URI; the scheme picks the backend |
-| `JWT_SECRET` | console session signing key |
+| `JWT_SECRET` | console session signing key — **must be base64**, see below |
 | `OSG_MASTER_KEY` | base64 of 32 random bytes — AES-256-GCM key for every stored secret |
 | `SERVER_HOST` | public origin, e.g. `https://osg.example.com`; no default, a missing value fails the boot |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` | Postgres overlay; no defaults |
@@ -43,7 +43,12 @@ without them:
 | `RATE_LIMIT_BURST` | back-to-back requests allowed before the rate applies; default `30` |
 | `RATE_LIMIT_TRUST_PROXY` | `true` to read the client IP from `Forwarded` / `X-Forwarded-For`; default `false` |
 
-Generate a master key with `openssl rand -base64 32`. `App::after_context`
+`JWT_SECRET` must be valid base64: loco signs with
+`EncodingKey::from_base64_secret`, so a non-base64 value lets the app boot and
+then fails every login with a generic "unauthorized!" that looks exactly like a
+wrong password. `App::after_context` now refuses to boot production on that too.
+
+Generate both with `openssl rand -base64 32`. `App::after_context`
 refuses to boot production when `OSG_MASTER_KEY` is missing, is not valid
 base64, does not decode to exactly 32 bytes, or is the development key checked
 into this repository. The check runs on the CLI subcommands too, so

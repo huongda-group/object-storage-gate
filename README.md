@@ -235,6 +235,10 @@ that used to be impossible.
 
 Generate a key with `openssl rand -base64 32`.
 
+`JWT_SECRET` must also be base64 — loco signs with
+`EncodingKey::from_base64_secret`, so a non-base64 value boots fine and then
+fails every login with a generic "unauthorized!". Boot refuses it in production.
+
 ## Layout
 
 ```

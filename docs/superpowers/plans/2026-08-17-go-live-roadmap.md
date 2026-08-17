@@ -19,8 +19,13 @@
 | 3 | Sửa tầng dữ liệu | `2026-08-17-p3-data-layer-correctness.md` | 7 High | **XONG** |
 | 4 | Console bỏ mock, nối API thật | `2026-08-17-p4-console-real-api.md` | Blocker 7, 8 | **XONG** |
 | 5 | Máy quota | `2026-08-17-p5-quota-engine.md` | Blocker 6 | **XONG** |
-| 6 | Gateway: SigV4 + route S3 + proxy | **chưa có plan — cần spec** | slice #2, #3 | 2, 3, 5 |
-| 7 | Gateway: multipart, copy, presigned, audit | **chưa có plan — cần spec** | slice #5, #6 | 6 |
+| G1 | Pools + ràng buộc bucket → pool | `2026-08-17-g1-pools-and-bucket-binding.md` | tiền đề cho cả gateway | 1 |
+| G2 | SigV4 + client upstream | `2026-08-17-g2-sigv4-and-upstream-client.md` | slice #2 | G1 |
+| G3 | Biên giới cách ly + đường đọc | `2026-08-17-g3-isolation-boundary-and-read-path.md` | slice #2, #3 | G2 |
+| G4 | Đường ghi + quota | `2026-08-17-g4-write-path-and-quota.md` | slice #3, #4 | G3, 5 |
+| G5 | Listing đọc từ DB | `2026-08-17-g5-listing-from-db.md` | slice #3 | G3 |
+| G6 | Multipart, copy, presigned | `2026-08-17-g6-multipart-copy-presigned.md` | slice #5 | G4 |
+| G7 | Audit, jobs, conformance | `2026-08-17-g7-audit-jobs-and-conformance.md` | slice #6 | G6 |
 
 Giai đoạn 1, 2, 3 độc lập nhau — chạy song song được nếu có nhiều người.
 Giai đoạn 4 cần API admin của giai đoạn 1. Giai đoạn 5 cần index và guard của
@@ -49,21 +54,21 @@ sự cố cách ly thì không truy được chuyện gì đã xảy ra.
 
 ---
 
-## Giai đoạn 6–7: vì sao chưa có plan
+## Gateway: G1–G7
 
-Viết plan TDD cho SigV4 mà không có spec là bịa. `docs/superpowers/plans/` hiện
-có 4 file, không file nào cho gateway; `docs/superpowers/specs/` cũng vậy. Trước
-khi viết được plan, phải chốt năm câu hỏi trong
-`docs/superpowers/specs/2026-08-17-go-live-hardening-design.md` mục 6:
+Spec: `docs/superpowers/specs/2026-08-17-s3-gateway-design.md`.
 
-1. Layout key vật lý — `FUTURE.md` và `README.md` đang mâu thuẫn.
-2. Streaming hay buffer — quyết định này chọn luôn HTTP client.
-3. Nguồn sự thật cho ETag.
-4. Redis bắt buộc hay tuỳ chọn.
-5. Versioning bây giờ hay sau.
+Tám quyết định đã chốt ở đó, kèm lý do: pool là bảng riêng · `reqwest` tự ký ·
+ETag lấy của upstream · listing đọc từ DB · multipart proxy thẳng · Redis bắt buộc
+cho queue audit · versioning chỉ để chỗ trống · một spec cho cả năm slice.
 
-Bước kế tiếp cho nhánh gateway là một phiên brainstorm ra
-`docs/superpowers/specs/2026-08-XX-s3-gateway-design.md`, không phải viết code.
+Thứ tự bắt buộc: **G1 → G2 → G3** rồi nhánh. G4 và G5 độc lập nhau sau G3, chạy
+song song được. G6 cần G4. G7 cần hết.
+
+G1 kéo theo một việc P4 để lại: màn Pool trên console mà P4 cho thành
+`ComingSoon` giờ có backend thật, cộng `/api/admin/pools`. Không có pool thì
+không tạo được bucket, không có bucket thì gateway vô dụng — nên nó nằm trong G1
+chứ không để mồ côi.
 
 ### Khối lượng đã biết (để ước lượng, không phải để thực thi)
 

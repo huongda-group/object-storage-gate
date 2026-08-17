@@ -50,7 +50,11 @@ fn master_key() -> &'static Key<Aes256Gcm> {
     })
 }
 
-/// Encrypt a secret for storage. Layout: `nonce || ciphertext || tag`.
+/// Envelope layout marker written as the first byte of every new ciphertext.
+/// Blobs written before this existed start straight with the nonce, and `decrypt` falls back to that layout.
+pub const ENVELOPE_V1: u8 = 1;
+
+/// Encrypt a secret for storage. Layout: `version || nonce || ciphertext || tag`.
 ///
 /// # Panics
 ///
@@ -62,25 +66,75 @@ pub fn encrypt(plaintext: &str) -> Vec<u8> {
     let mut ct = cipher
         .encrypt(&nonce, plaintext.as_bytes())
         .expect("encrypt");
-    let mut out = nonce.to_vec();
+    let mut out = Vec::with_capacity(1 + NONCE_LEN + ct.len());
+    out.push(ENVELOPE_V1);
+    out.extend_from_slice(nonce.as_slice());
     out.append(&mut ct);
     out
 }
 
-/// Decrypt a stored secret. Fails on truncated/tampered input.
+/// Decrypt a stored secret. Fails on truncated or tampered input.
+///
+/// Tries the current key first, then `OSG_MASTER_KEY_PREVIOUS` when it is set, so a key rotation can read old rows while new writes use the new key.
+/// Accepts both the versioned layout and the original `nonce || ciphertext || tag` one.
 ///
 /// # Errors
-/// Returns an error if input is too short or authentication fails.
+/// Returns an error if the input is too short, or if authentication fails under every available key.
 pub fn decrypt(data: &[u8]) -> Result<String> {
-    if data.len() <= NONCE_LEN {
-        return Err(Error::string("ciphertext too short"));
+    for body in candidate_bodies(data) {
+        for key in candidate_keys() {
+            if let Some(plain) = try_decrypt(key, body) {
+                return String::from_utf8(plain).map_err(|e| Error::string(&e.to_string()));
+            }
+        }
     }
-    let (nonce_bytes, ct) = data.split_at(NONCE_LEN);
-    let cipher = Aes256Gcm::new(master_key());
-    let pt = cipher
+    Err(Error::string("decrypt failed"))
+}
+
+// ponytail: two candidate layouts times two candidate keys is at most four AES-GCM attempts on a legacy row during a rotation.
+// Ceiling: fine at this volume; drop the legacy layout once a re-encrypt pass has rewritten every row.
+/// The byte slices to try, newest layout first.
+fn candidate_bodies(data: &[u8]) -> Vec<&[u8]> {
+    let mut out = Vec::with_capacity(2);
+    if data.len() > 1 + NONCE_LEN && data[0] == ENVELOPE_V1 {
+        out.push(&data[1..]);
+    }
+    if data.len() > NONCE_LEN {
+        out.push(data);
+    }
+    out
+}
+
+/// The current master key, then the previous one when a rotation is in progress.
+fn candidate_keys() -> Vec<&'static Key<Aes256Gcm>> {
+    let mut keys = vec![master_key()];
+    if let Some(previous) = previous_key() {
+        keys.push(previous);
+    }
+    keys
+}
+
+fn try_decrypt(key: &Key<Aes256Gcm>, body: &[u8]) -> Option<Vec<u8>> {
+    let (nonce_bytes, ct) = body.split_at(NONCE_LEN);
+    Aes256Gcm::new(key)
         .decrypt(Nonce::from_slice(nonce_bytes), ct)
-        .map_err(|_| Error::string("decrypt failed"))?;
-    String::from_utf8(pt).map_err(|e| Error::string(&e.to_string()))
+        .ok()
+}
+
+/// The key rows were encrypted under before the current rotation, if one is in progress.
+/// Set `OSG_MASTER_KEY_PREVIOUS` during a rotation, re-encrypt, then unset it.
+fn previous_key() -> Option<&'static Key<Aes256Gcm>> {
+    static PREVIOUS: OnceLock<Option<Key<Aes256Gcm>>> = OnceLock::new();
+    PREVIOUS
+        .get_or_init(|| {
+            let b64 = std::env::var("OSG_MASTER_KEY_PREVIOUS").ok()?;
+            let bytes = STANDARD.decode(b64.trim()).ok()?;
+            if bytes.len() != 32 {
+                return None;
+            }
+            Some(*Key::<Aes256Gcm>::from_slice(&bytes))
+        })
+        .as_ref()
 }
 
 #[cfg(test)]
@@ -108,6 +162,31 @@ mod tests {
     #[test]
     fn too_short_fails() {
         assert!(decrypt(b"short").is_err());
+    }
+
+    /// Reproduces the pre-versioning envelope layout: `nonce || ciphertext || tag`.
+    fn legacy_encrypt_for_test(plaintext: &str) -> Vec<u8> {
+        let cipher = Aes256Gcm::new(master_key());
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let mut ct = cipher
+            .encrypt(&nonce, plaintext.as_bytes())
+            .expect("encrypt");
+        let mut out = nonce.to_vec();
+        out.append(&mut ct);
+        out
+    }
+
+    #[test]
+    fn new_envelope_carries_a_version_byte() {
+        let blob = encrypt("secret");
+        assert_eq!(blob[0], ENVELOPE_V1);
+        assert_eq!(decrypt(&blob).unwrap(), "secret");
+    }
+
+    #[test]
+    fn legacy_envelope_without_a_version_byte_still_decrypts() {
+        let legacy = legacy_encrypt_for_test("old secret");
+        assert_eq!(decrypt(&legacy).unwrap(), "old secret");
     }
 
     #[test]

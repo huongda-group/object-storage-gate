@@ -71,7 +71,7 @@ validate cho phép đúng 512 — nên cùng một request thành công trên Po
 báo `Data too long` trên MySQL. Với `object_key` thì nặng hơn: S3 cho phép key
 tới 1024 byte, và giới hạn 255 sẽ vỡ ngay khi tầng S3 lên.
 
-- [ ] **Step 1: Viết test biên độ dài**
+- [x] **Step 1: Viết test biên độ dài**
 
 Tạo `tests/models/portability.rs`:
 
@@ -146,7 +146,7 @@ Ghi chú: tên hàm tạo bucket ở dòng `create_for_user` phải khớp API t
 `src/models/buckets.rs` — kiểm bằng `grep -n "pub async fn create" src/models/buckets.rs`
 và sửa lời gọi cho khớp trước khi chạy.
 
-- [ ] **Step 2: Chạy trên MySQL để thấy nó fail**
+- [x] **Step 2: Chạy trên MySQL để thấy nó fail**
 
 ```bash
 DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test --test mod models::portability 2>&1 | tail -20
@@ -160,7 +160,7 @@ DATABASE_URL=postgres://loco:loco@localhost:5432/osg_test cargo test --test mod 
 
 Expected: PASS — chính sự khác biệt này là finding.
 
-- [ ] **Step 3: Viết migration**
+- [x] **Step 3: Viết migration**
 
 Tạo `migration/src/m20260817_000003_column_lengths.rs`:
 
@@ -220,7 +220,7 @@ impl MigrationTrait for Migration {
 
 Đăng ký trong `migration/src/lib.rs` phía trên marker `inject-above`.
 
-- [ ] **Step 4: Xử lý giới hạn index của InnoDB**
+- [x] **Step 4: Xử lý giới hạn index của InnoDB**
 
 `objects.object_key` nằm trong unique index `idx_objects_bucket_key` cùng
 `bucket_id`. Với `utf8mb4`, `varchar(1024)` chiếm `1024 * 4 = 4096` byte, vượt
@@ -284,7 +284,7 @@ Ghi chú `ponytail:` đặt ngay trên khối MySQL:
 // Upgrade path: index a hash column of the full key if that ever happens in practice.
 ```
 
-- [ ] **Step 5: Chạy migration và test trên ba backend**
+- [x] **Step 5: Chạy migration và test trên ba backend**
 
 ```bash
 DB_TYPE=postgres cargo loco db reset && cargo test --test mod models::portability
@@ -294,7 +294,7 @@ DATABASE_URL=sqlite::memory: cargo test --test mod models::portability
 
 Expected: PASS cả ba.
 
-- [ ] **Step 6: Sinh lại entity**
+- [x] **Step 6: Sinh lại entity**
 
 ```bash
 DB_TYPE=postgres cargo loco db entities
@@ -302,7 +302,7 @@ DB_TYPE=postgres cargo loco db entities
 
 Kiểu Rust không đổi (vẫn `String`), nhưng chạy để `_entities/` khớp schema thật.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add migration/ src/models/_entities/ tests/
@@ -334,7 +334,7 @@ hoa/thường. Postgres và SQLite thì phân biệt. Client PUT `Photos/A.JPG` 
 mất object thứ nhất**. Mất dữ liệu âm thầm, và sai semantics S3 vì key S3 luôn
 phân biệt hoa/thường.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Thêm vào `tests/models/portability.rs`:
 
@@ -398,7 +398,7 @@ async fn bucket_names_are_case_sensitive() {
 }
 ```
 
-- [ ] **Step 2: Chạy trên MySQL để thấy nó fail**
+- [x] **Step 2: Chạy trên MySQL để thấy nó fail**
 
 ```bash
 DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test --test mod models::portability::object_keys 2>&1 | tail -20
@@ -406,7 +406,7 @@ DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test --test mod mod
 
 Expected: FAIL — `upper.size` bằng 20, vì bản ghi thứ hai đã đè bản ghi thứ nhất.
 
-- [ ] **Step 3: Viết migration**
+- [x] **Step 3: Viết migration**
 
 Tạo `migration/src/m20260817_000004_binary_collation.rs`:
 
@@ -476,7 +476,7 @@ SELECT bucket_id, LOWER(object_key), COUNT(*) c
 FROM objects GROUP BY bucket_id, LOWER(object_key) HAVING c > 1;
 ```
 
-- [ ] **Step 4: Chạy test ba backend**
+- [x] **Step 4: Chạy test ba backend**
 
 ```bash
 DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo loco db reset
@@ -487,7 +487,7 @@ cargo test --test mod models::portability
 
 Expected: PASS cả ba.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add migration/ tests/
@@ -517,7 +517,7 @@ unique — mà `find_by_pid` chạy **mỗi request có JWT**
 lần gọi API. Index hàm `(COALESCE(user_id,0), name)` của buckets không dùng được
 cho `WHERE user_id = ?` trên Postgres.
 
-- [ ] **Step 1: Viết migration**
+- [x] **Step 1: Viết migration**
 
 Tạo `migration/src/m20260817_000005_hot_indexes.rs`:
 
@@ -581,7 +581,7 @@ Ghi chú: `idx_users_api_key_prefix` chỉ có nghĩa sau khi P2 task 4 thêm c�
 `api_key_prefix`. Nếu P3 chạy trước P2, bỏ dòng đó ra khỏi mảng và thêm lại sau
 — migration sẽ fail với "column not found" nếu cột chưa tồn tại.
 
-- [ ] **Step 2: Chạy migration ba backend**
+- [x] **Step 2: Chạy migration ba backend**
 
 ```bash
 DB_TYPE=postgres cargo loco db reset && cargo test 2>&1 | tail -5
@@ -591,7 +591,7 @@ DATABASE_URL=sqlite::memory: cargo test 2>&1 | tail -5
 
 Expected: PASS cả ba. Test không đổi — đây là thay đổi hiệu năng, không đổi hành vi.
 
-- [ ] **Step 3: Xác nhận index thật sự được dùng**
+- [x] **Step 3: Xác nhận index thật sự được dùng**
 
 ```bash
 DB_TYPE=postgres cargo loco db reset
@@ -601,7 +601,7 @@ psql postgres://loco:loco@localhost:5432/osg_development -c \
 
 Expected: `Index Scan using idx_users_pid`, không phải `Seq Scan`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add migration/
@@ -632,7 +632,7 @@ tuần tự nhiều update — cửa sổ đua rộng. Admin thu hồi key bị 
 gửi `PATCH {"status":"active"}` từ model cũ: UPDATE sau thắng, key đã thu hồi sống
 lại.
 
-- [ ] **Step 1: Viết test đua**
+- [x] **Step 1: Viết test đua**
 
 Tạo `tests/models/concurrency.rs`:
 
@@ -736,12 +736,12 @@ async fn a_revoked_key_cannot_be_rotated_from_a_stale_model() {
 
 Thêm `mod concurrency;` vào `tests/models/mod.rs`.
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod models::concurrency 2>&1 | tail -20`
 Expected: FAIL — `set_status` trên model cũ thành công, key trở lại `active`.
 
-- [ ] **Step 3: Đổi `set_status` sang UPDATE có guard**
+- [x] **Step 3: Đổi `set_status` sang UPDATE có guard**
 
 Trong `src/models/access_keys.rs`:
 
@@ -801,7 +801,7 @@ Trong `src/models/access_keys.rs`:
 
 Thêm `use sea_orm::sea_query::Expr;` đầu file nếu prelude chưa kéo vào.
 
-- [ ] **Step 4: Đổi `rotate` cho an toàn**
+- [x] **Step 4: Đổi `rotate` cho an toàn**
 
 Vấn đề thứ hai của `rotate` (`access_keys.rs:339`): `create_key` tự commit
 transaction riêng, rồi `am.update(db)` để disable key cũ chạy **ngoài mọi
@@ -849,7 +849,7 @@ không biết.
     }
 ```
 
-- [ ] **Step 5: Chạy test ba backend**
+- [x] **Step 5: Chạy test ba backend**
 
 ```bash
 cargo test --test mod models 2>&1 | tail -10
@@ -862,7 +862,7 @@ Expected: PASS. Test cũ trong `tests/models/access_keys.rs` khẳng định
 lần là lỗi thì sửa nó — hành vi mới là idempotent, và đó là hành vi đúng cho một
 thao tác dập sự cố.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ tests/
@@ -898,7 +898,7 @@ key cắm vào, một key chỉ được phép `tenants/a/` gửi `prefix=tenant
 được `tenants/ab/`, và `prefix=%` quét cả bucket. Thêm nữa `LIKE` của SQLite mặc
 định không phân biệt hoa/thường với ASCII, nên ba backend cho ba kết quả.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Thêm vào `tests/models/objects.rs`:
 
@@ -988,12 +988,12 @@ async fn concurrent_put_object_on_the_same_key_does_not_error() {
 }
 ```
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod models::objects::list_by_prefix 2>&1 | tail -20`
 Expected: FAIL — `a_/` khớp cả `ab/two` và `az/four`.
 
-- [ ] **Step 3: Sửa `list_by_prefix`**
+- [x] **Step 3: Sửa `list_by_prefix`**
 
 ```rust
     /// Objects in a bucket whose key starts with `prefix`, up to `limit`, ordered by key (`ListObjectsV2` backing query).
@@ -1073,7 +1073,7 @@ mod tests {
 Kiểm lại `prefix_upper_bound("a/")`: `/` là U+002F, cộng một ra U+0030 là `0`.
 Vậy khoảng là `["a/", "a0")` — đúng, mọi key bắt đầu bằng `a/` nằm trong đó.
 
-- [ ] **Step 4: Sửa `put_object`**
+- [x] **Step 4: Sửa `put_object`**
 
 ```rust
     /// Insert a new object or overwrite the existing `(bucket_id, key)` row (`PutObject` semantics, versioning off).
@@ -1131,7 +1131,7 @@ Vậy khoảng là `["a/", "a0")` — đúng, mọi key bắt đầu bằng `a/`
     }
 ```
 
-- [ ] **Step 5: Chạy test ba backend**
+- [x] **Step 5: Chạy test ba backend**
 
 ```bash
 cargo test --test mod models 2>&1 | tail -10
@@ -1144,7 +1144,7 @@ Expected: PASS. Trên SQLite, test đua có thể gặp `SQLITE_BUSY` — `busy_
 đã là 5000ms nên nó sẽ chờ và thành công; nếu vẫn fail, đó là một phát hiện thật
 và phải xử lý chứ không phải nới test.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ tests/
@@ -1181,7 +1181,7 @@ không theo user, nên không bị xoá. Ngoài rò rỉ, còn kịch bản trù
 P1 task 4 đã đặt một guard tạm: từ chối xoá user còn bucket. Task này thay guard
 đó bằng hành vi đúng.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Thêm vào `tests/requests/admin.rs`:
 
@@ -1240,12 +1240,12 @@ async fn deleting_a_user_removes_their_buckets_and_objects() {
 
 Thêm import `buckets` và `objects` vào đầu file test.
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod requests::admin::deleting 2>&1 | tail -20`
 Expected: FAIL — P1 trả 400 "delete or reassign this user's buckets first".
 
-- [ ] **Step 3: Thêm phương thức model**
+- [x] **Step 3: Thêm phương thức model**
 
 Trong `src/models/users.rs`, `impl Model`:
 
@@ -1280,7 +1280,7 @@ nên không cần xoá tay. Kiểm lại bằng
 `grep -n 'users' migration/src/m20260724_000003_access_keys.rs` — nếu ở đó cũng là
 `"users?"` thì phải xoá tay như buckets.
 
-- [ ] **Step 4: Sửa handler**
+- [x] **Step 4: Sửa handler**
 
 Trong `src/controllers/admin.rs`, thay khối guard bucket bằng:
 
@@ -1299,7 +1299,7 @@ Trong `src/controllers/admin.rs`, thay khối guard bucket bằng:
 
 Bỏ `use crate::models::buckets;` khỏi controller nếu không còn dùng.
 
-- [ ] **Step 5: Chạy test ba backend**
+- [x] **Step 5: Chạy test ba backend**
 
 ```bash
 cargo test 2>&1 | tail -10
@@ -1307,7 +1307,7 @@ DATABASE_URL=postgres://loco:loco@localhost:5432/osg_test cargo test 2>&1 | tail
 DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test 2>&1 | tail -5
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ tests/
@@ -1336,7 +1336,7 @@ key song song. Đúng lúc cần xoay `OSG_MASTER_KEY` — kể cả xoay bắt 
 bản key dev — mọi `access_keys.secret_encrypted` và
 `buckets.access_secret_encrypted` thành rác vĩnh viễn.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Thêm vào `mod tests` của `src/models/crypto.rs`:
 
@@ -1372,12 +1372,12 @@ Thêm helper chỉ dùng cho test, ngay trong `mod tests`:
     }
 ```
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --lib crypto 2>&1 | tail -10`
 Expected: FAIL — `ENVELOPE_V1` chưa tồn tại.
 
-- [ ] **Step 3: Viết envelope có version**
+- [x] **Step 3: Viết envelope có version**
 
 Trong `src/models/crypto.rs`:
 
@@ -1475,7 +1475,7 @@ Ghi chú `ponytail:` đặt trên `candidate_bodies`:
 // Ceiling: fine at this volume; drop the legacy layout once a re-encrypt task has rewritten every row.
 ```
 
-- [ ] **Step 4: Chạy test**
+- [x] **Step 4: Chạy test**
 
 Run: `cargo test --lib crypto 2>&1 | tail -10`
 Expected: PASS 9 test.
@@ -1484,7 +1484,7 @@ Run: `cargo test 2>&1 | tail -10`
 Expected: PASS — test round-trip của `access_keys` và `buckets` vẫn xanh vì
 `encrypt`/`decrypt` đối xứng.
 
-- [ ] **Step 5: Ghi quy trình xoay key**
+- [x] **Step 5: Ghi quy trình xoay key**
 
 Thêm vào `README.md`:
 
@@ -1506,7 +1506,7 @@ Ghi chú: task ở bước 2 chưa tồn tại — nó thuộc `src/tasks/`, hi�
 Thêm mục vào backlog thay vì viết nửa vời ở đây; đường đọc hai key đã đủ để một
 lần xoay không phá dữ liệu, đó là cái quan trọng.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ README.md

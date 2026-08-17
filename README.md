@@ -185,7 +185,26 @@ then verifies the whole token. There is no read endpoint — a token not copied 
 rotation is gone.
 
 **Production must set `OSG_MASTER_KEY`** to a base64-encoded 32-byte key.
-Without it the code falls back to a hard-coded development key.
+`App::after_context` refuses to boot production when it is missing, malformed,
+or equal to the development key checked into this repository — CLI subcommands
+included.
+
+### Rotating `OSG_MASTER_KEY`
+
+Every access-key secret and every backend-store credential is encrypted with
+this key. The stored envelope is `version || nonce || ciphertext || tag`, and
+decryption falls back to a previous key, so a rotation is three steps:
+
+1. Set `OSG_MASTER_KEY_PREVIOUS` to the current key and `OSG_MASTER_KEY` to the
+   new one. Deploy. New writes use the new key; old rows still decrypt.
+2. Re-encrypt every stored secret under the new key.
+3. Unset `OSG_MASTER_KEY_PREVIOUS`. Deploy.
+
+Step 2 has no task yet — `src/tasks/` is where it belongs. The two-key read path
+exists so that a rotation cannot destroy data in the meantime, which is the part
+that used to be impossible.
+
+Generate a key with `openssl rand -base64 32`.
 
 ## Layout
 

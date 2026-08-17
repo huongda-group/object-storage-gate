@@ -3,10 +3,13 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { Header, initialsOf } from "../../components/Header";
 import { useShell } from "../../components/shell";
 import { Page, monoStyle } from "../../components/ui";
+import { getSummary } from "../../lib/auth";
 import { fmt } from "../../lib/format";
-import { ACCOUNT, BUCKETS, KEYS } from "../../lib/mock";
 
-export const Route = createFileRoute("/_app/profile")({ component: Profile });
+export const Route = createFileRoute("/_app/profile")({
+  loader: () => getSummary(),
+  component: Profile,
+});
 
 const statCard = {
   background: "var(--panel)",
@@ -32,7 +35,7 @@ const statValue = {
 
 function Profile() {
   const { user, requestLogout } = useShell();
-  const activeKeys = KEYS.filter((k) => k.status === "active").length;
+  const summary = Route.useLoaderData();
 
   return (
     <>
@@ -150,15 +153,15 @@ function Profile() {
         >
           <div style={statCard}>
             <div style={statLabel}>DUNG LƯỢNG ĐÃ DÙNG</div>
-            <div style={statValue}>{fmt(ACCOUNT.used)}</div>
+            <div style={statValue}>{fmt(summary.used_bytes)}</div>
           </div>
           <div style={statCard}>
             <div style={statLabel}>BUCKET SỞ HỮU</div>
-            <div style={statValue}>{BUCKETS.length}</div>
+            <div style={statValue}>{summary.bucket_count}</div>
           </div>
           <div style={statCard}>
             <div style={statLabel}>ACCESS KEY HOẠT ĐỘNG</div>
-            <div style={statValue}>{activeKeys}</div>
+            <div style={statValue}>{summary.active_key_count}</div>
           </div>
         </div>
       </Page>

@@ -47,9 +47,12 @@ export function SecretRevealModal({
 
   async function copy(text: string, which: "id" | "secret") {
     try {
-      await navigator.clipboard?.writeText(text);
+      await navigator.clipboard.writeText(text);
     } catch {
-      // clipboard unavailable — still confirm to the user
+      // On an insecure origin, or with the permission denied, nothing was copied — and this
+      // is the one secret the user cannot come back for.
+      toast("Trình duyệt không cho copy. Chọn và copy thủ công.", "danger");
+      return;
     }
     setCopied(which);
     toast("Đã copy vào clipboard");
@@ -62,8 +65,12 @@ export function SecretRevealModal({
     const a = document.createElement("a");
     a.href = url;
     a.download = "osgate-credentials.csv";
+    // Firefox needs the anchor in the document, and revoking in the same tick races the
+    // download in several browsers.
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     toast("Đã tải osgate-credentials.csv");
   }
 

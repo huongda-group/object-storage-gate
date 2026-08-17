@@ -1,6 +1,5 @@
 // Ported from console-object-storage-gate/project/Dashboard.dc.html.
-// TODO(slice#7): the prototype's loading skeleton (line 113) and quota-fetch error banner (lines 65-73) need GET /api/me/summary to drive them; port them with the API call.
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
 import type React from "react";
 import { useState } from "react";
 import { Header } from "../../components/Header";
@@ -15,41 +14,39 @@ import {
   QuotaBar,
   monoStyle,
 } from "../../components/ui";
+import { endpoint, loadDashboard } from "../../lib/dashboard";
 import { fmt, grp, pill, quotaView, shortId } from "../../lib/format";
-import {
-  ACCOUNT,
-  ACCOUNT_STATS,
-  BUCKETS,
-  ENDPOINT,
-  KEYS,
-  REGION,
-} from "../../lib/mock";
 
-export const Route = createFileRoute("/_app/")({ component: Dashboard });
+export const Route = createFileRoute("/_app/")({
+  loader: () => loadDashboard(),
+  component: Dashboard,
+});
 
 type Tab = "aws" | "rclone" | "boto";
 
-const SNIPPETS: Record<Tab, string> = {
-  aws: `aws configure set aws_access_key_id <ACCESS_KEY_ID>
-aws s3 ls s3://media-cdn/ \\
-  --endpoint-url ${ENDPOINT} \\
-  --region ${REGION}`,
-  rclone: `rclone config create osgate s3 \\
+/// Built at render time from the deployment's own origin and one of the account's real bucket
+/// names, so the command a user copies actually works against this gateway.
+function snippets(host: string, bucket: string): Record<Tab, string> {
+  return {
+    aws: `aws configure set aws_access_key_id <ACCESS_KEY_ID>
+aws s3 ls s3://${bucket}/ \\
+  --endpoint-url ${host}`,
+    rclone: `rclone config create osgate s3 \\
   provider=Other env_auth=false \\
   access_key_id=<ACCESS_KEY_ID> \\
-  endpoint=${ENDPOINT} region=${REGION}
+  endpoint=${host}
 
-rclone ls osgate:media-cdn`,
-  boto: `import boto3
+rclone ls osgate:${bucket}`,
+    boto: `import boto3
 
 s3 = boto3.client("s3",
-    endpoint_url="${ENDPOINT}",
-    region_name="${REGION}",
+    endpoint_url="${host}",
     aws_access_key_id="<ACCESS_KEY_ID>",
     aws_secret_access_key="<SECRET>")
 
-print(s3.list_objects_v2(Bucket="media-cdn")["KeyCount"])`,
-};
+print(s3.list_objects_v2(Bucket="${bucket}")["KeyCount"])`,
+  };
+}
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "aws", label: "aws-cli" },
@@ -86,14 +83,24 @@ const statValue: React.CSSProperties = {
 function Dashboard() {
   const { user, requestLogout } = useShell();
   const toast = useToast();
+  const router = useRouter();
+  const { summary, buckets, keys } = Route.useLoaderData();
   const [tab, setTab] = useState<Tab>("aws");
   const [copied, setCopied] = useState(false);
   const [syncAt, setSyncAt] = useState(() => hhmm(new Date()));
 
-  const acc = quotaView(ACCOUNT.used, ACCOUNT.max, ACCOUNT.res);
-  const topBuckets = BUCKETS.slice(0, 4);
-  const recentKeys = KEYS.slice(0, 3);
-  const isEmpty = BUCKETS.length === 0;
+  const host = endpoint();
+  const acc = quotaView(
+    summary.used_bytes,
+    summary.max_bytes,
+    summary.reserved_bytes,
+  );
+  const sorted = [...buckets].sort((a, b) => b.used_bytes - a.used_bytes);
+  const topBuckets = sorted.slice(0, 4);
+  const recentKeys = keys.slice(0, 3);
+  const isEmpty = buckets.length === 0;
+  const sampleBucket = sorted[0]?.name ?? "<BUCKET>";
+  const SNIPPETS = snippets(host, sampleBucket);
 
   const header = (
     <Header
@@ -163,8 +170,7 @@ function Dashboard() {
                 title="Copy lệnh kết nối"
                 text={
                   <>
-                    Endpoint <span style={monoStyle}>{ENDPOINT}</span>, region{" "}
-                    <span style={monoStyle}>{REGION}</span>.
+                    Endpoint <span style={monoStyle}>{host}</span>.
                   </>
                 }
               />
@@ -197,8 +203,10 @@ function Dashboard() {
             type="button"
             className="btnGhost"
             onClick={() => {
-              setSyncAt(hhmm(new Date()));
-              toast("Đã cập nhật số liệu quota");
+              void router.invalidate().then(() => {
+                setSyncAt(hhmm(new Date()));
+                toast("Đã cập nhật số liệu quota");
+              });
             }}
             style={{
               display: "flex",
@@ -288,25 +296,32 @@ function Dashboard() {
 
           <div style={statCard}>
             <div style={statLabel}>BUCKET</div>
-            <div style={statValue}>{ACCOUNT_STATS.buckets}</div>
+            <div style={statValue}>{summary.bucket_count}</div>
             <div style={{ fontSize: 12, color: "var(--dim)", marginTop: 6 }}>
-              {BUCKETS.filter((b) => !b.max).length} bucket không giới hạn
+              {buckets.filter((b) => b.max_bytes === 0).length} bucket không
+              giới hạn
             </div>
           </div>
 
           <div style={statCard}>
             <div style={statLabel}>OBJECT</div>
-            <div style={statValue}>{ACCOUNT_STATS.objects}</div>
+            <div style={statValue}>{grp(summary.object_count)}</div>
             <div style={{ fontSize: 12, color: "var(--dim)", marginTop: 6 }}>
-              trên {BUCKETS.length} bucket
+              trên {buckets.length} bucket
             </div>
           </div>
 
           <div style={statCard}>
             <div style={statLabel}>ACCESS KEY HOẠT ĐỘNG</div>
-            <div style={statValue}>{ACCOUNT_STATS.keys}</div>
+            <div style={statValue}>{summary.active_key_count}</div>
             <div style={{ fontSize: 12, color: "var(--warn)", marginTop: 6 }}>
-              {KEYS.filter((k) => k.expSoon).length} key hết hạn trong 3 ngày
+              {
+                keys.filter(
+                  (k) =>
+                    k.days_until_expiry !== null && k.days_until_expiry <= 3,
+                ).length
+              }{" "}
+              key hết hạn trong 3 ngày
             </div>
           </div>
         </div>
@@ -331,12 +346,16 @@ function Dashboard() {
             />
             <div style={{ padding: "6px 8px" }}>
               {topBuckets.map((b) => {
-                const q = quotaView(b.used, b.max, b.res);
+                const q = quotaView(
+                  b.used_bytes,
+                  b.max_bytes,
+                  b.reserved_bytes,
+                );
                 return (
                   <Link
                     key={b.name}
-                    to="/buckets/$name"
-                    params={{ name: b.name }}
+                    to="/buckets/$pid"
+                    params={{ pid: b.pid }}
                     className="rowHover linkPlain"
                     style={{
                       display: "grid",
@@ -374,7 +393,7 @@ function Dashboard() {
                         }}
                       >
                         {q.unlimited
-                          ? `${fmt(b.used)} đã dùng · ∞ Không giới hạn`
+                          ? `${fmt(b.used_bytes)} đã dùng · ∞ Không giới hạn`
                           : q.pctText}
                       </div>
                     </div>
@@ -387,7 +406,7 @@ function Dashboard() {
                         whiteSpace: "nowrap",
                       }}
                     >
-                      {grp(b.objects)} obj
+                      {grp(b.object_count)} obj
                     </div>
                   </Link>
                 );
@@ -407,9 +426,9 @@ function Dashboard() {
             <div style={{ padding: "6px 8px" }}>
               {recentKeys.map((k) => (
                 <Link
-                  key={k.id}
+                  key={k.pid}
                   to="/keys/$pid"
-                  params={{ pid: k.id }}
+                  params={{ pid: k.pid }}
                   className="rowHover linkPlain"
                   style={{
                     display: "flex",
@@ -432,7 +451,7 @@ function Dashboard() {
                         textOverflow: "ellipsis",
                       }}
                     >
-                      {shortId(k.id)}
+                      {shortId(k.access_key_id)}
                     </div>
                     <div
                       style={{
@@ -441,7 +460,8 @@ function Dashboard() {
                         marginTop: 3,
                       }}
                     >
-                      {k.label} · {k.created}
+                      {k.label} ·{" "}
+                      {new Date(k.created_at).toLocaleDateString("vi-VN")}
                     </div>
                   </div>
                   <Pill view={pill(k.status)} />
@@ -491,9 +511,13 @@ function Dashboard() {
               className="btnGhost"
               onClick={async () => {
                 try {
-                  await navigator.clipboard?.writeText(SNIPPETS[tab]);
+                  await navigator.clipboard.writeText(SNIPPETS[tab]);
                 } catch {
-                  // clipboard unavailable — still confirm to the user
+                  toast(
+                    "Trình duyệt không cho copy. Chọn và copy thủ công.",
+                    "danger",
+                  );
+                  return;
                 }
                 setCopied(true);
                 toast("Đã copy vào clipboard");

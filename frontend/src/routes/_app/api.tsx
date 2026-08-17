@@ -68,9 +68,10 @@ function ApiPage() {
 
   async function copy(text: string) {
     try {
-      await navigator.clipboard?.writeText(text);
+      await navigator.clipboard.writeText(text);
     } catch {
-      // clipboard unavailable — still confirm to the user
+      toast("Trình duyệt không cho copy. Chọn và copy thủ công.", "danger");
+      return;
     }
     toast("Đã copy vào clipboard");
   }

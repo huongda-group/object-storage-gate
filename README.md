@@ -35,7 +35,7 @@ today.
 | JWT user auth — first-run setup, login, forced password change | **done** |
 | Self-registration, email verification, magic link, password reset | **removed** 2026-08-17 — accounts are admin-created |
 | Admin user management API | **done** (P1) |
-| Console SPA — every screen; auth, access keys and the API page wired to the real API | **done**; buckets/objects/admin screens still on mocks |
+| Console SPA — every screen on the real API; no fixture data anywhere | **done** (P4) |
 | S3 conformance test suite | **done**, runs against a real store today |
 | SigV4 verify + user/bucket resolution | slice #2 |
 | Prefix rewrite + backend proxy + S3 verbs | slice #3 |
@@ -43,7 +43,8 @@ today.
 | Versioning, CopyObject, multipart | slice #5 |
 | Audit log + background jobs | slice #6 |
 | Access key REST API + PAT-authenticated account API | **done** (slice #7) |
-| Bucket/object/admin REST API for the console | slice #7, remainder |
+| Bucket + account + admin REST API for the console | **done** (P4) |
+| Object browser and backend-store pool screens | blocked on the S3 slice; both show a status page |
 
 No S3 endpoint is served yet. The gateway exposes the account API under
 `/api/*` and serves `frontend/dist` as static files.
@@ -133,6 +134,12 @@ curl -X POST "$OSG_HOST/api/keys" \
 | POST | `/api/keys/{pid}/rotate` | new key with the same policy; old one goes `disabled` |
 | DELETE | `/api/keys/{pid}` | revoke permanently (terminal — no way back) |
 | GET | `/api/buckets` | buckets owned by the account |
+| POST | `/api/buckets` | create — `max_bytes` required, S3 naming rules enforced |
+| GET | `/api/buckets/{pid}` | one bucket |
+| PATCH | `/api/buckets/{pid}` | quota, public flag |
+| DELETE | `/api/buckets/{pid}` | delete — refused while the bucket holds objects |
+| PATCH | `/api/me` | rename yourself; role and quota are an admin's call |
+| GET | `/api/me/summary` | bytes used, bucket count, object count, active keys |
 | GET | `/api/usage` | used / reserved / max bytes, object and bucket counts |
 | POST | `/api/me/password` | replace your own password, including an admin-issued temporary one |
 | POST | `/api/token/rotate` | mint a personal access token — returned **once**, stored hashed |

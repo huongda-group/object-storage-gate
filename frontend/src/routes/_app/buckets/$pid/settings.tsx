@@ -12,27 +12,59 @@ import {
   TableWrap,
   monoStyle,
 } from "../../../../components/ui";
+import { run } from "../../../../lib/api-client";
+import {
+  deleteBucket as apiDeleteBucket,
+  updateBucket as apiUpdateBucket,
+  getBucket,
+} from "../../../../lib/buckets";
+import { UNITS } from "../../../../lib/dashboard";
 import { fmt } from "../../../../lib/format";
-import { BUCKETS, UNITS } from "../../../../lib/mock";
 
-export const Route = createFileRoute("/_app/buckets/$name/settings")({
+export const Route = createFileRoute("/_app/buckets/$pid/settings")({
+  loader: ({ params }) => getBucket(params.pid),
   component: BucketSettings,
 });
 
 function BucketSettings() {
-  const { name } = Route.useParams();
+  const { pid } = Route.useParams();
+  const bucket = Route.useLoaderData();
+  const name = bucket.name;
   const { user, requestLogout } = useShell();
   const toast = useToast();
   const navigate = useNavigate();
 
-  const bucket = BUCKETS.find((b) => b.name === name);
-
   const [num, setNum] = useState(() =>
-    bucket?.max ? String(Math.round(bucket.max / UNITS.GiB)) : "50",
+    bucket.max_bytes ? String(Math.round(bucket.max_bytes / UNITS.GiB)) : "50",
   );
   const [unit, setUnit] = useState<keyof typeof UNITS>("GiB");
-  const [unlimited, setUnlimited] = useState(!bucket?.max);
+  const [unlimited, setUnlimited] = useState(bucket.max_bytes === 0);
   const [deleting, setDeleting] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    const max = unlimited
+      ? 0
+      : Math.round(Number.parseFloat(num || "0") * UNITS[unit]);
+    const updated = await run(() => apiUpdateBucket(pid, { max_bytes: max }), {
+      onError: (m) => toast(m, "danger"),
+    });
+    setBusy(false);
+    if (updated) toast("Đã lưu quota");
+  }
+
+  async function destroy() {
+    if (busy) return;
+    setBusy(true);
+    const ok = await run(() => apiDeleteBucket(pid), {
+      onError: (m) => toast(m, "danger"),
+    });
+    setBusy(false);
+    setDeleting(false);
+    if (ok !== undefined) navigate({ to: "/buckets" });
+  }
 
   const header = (
     <Header
@@ -45,8 +77,8 @@ function BucketSettings() {
           </Link>
           <span style={{ color: "var(--faint)", fontSize: 12 }}>/</span>
           <Link
-            to="/buckets/$name"
-            params={{ name }}
+            to="/buckets/$pid"
+            params={{ pid }}
             style={{ fontSize: 13, color: "var(--dim)", ...monoStyle }}
           >
             {name}
@@ -82,8 +114,8 @@ function BucketSettings() {
   }
 
   const newMax = unlimited ? 0 : Number.parseFloat(num || "0") * UNITS[unit];
-  // A quota under current usage is allowed by the API but blocks every new write.
-  const belowUsed = !unlimited && newMax < bucket.used;
+  // The API refuses a quota under current usage; warn before the request rather than after.
+  const belowUsed = !unlimited && newMax < bucket.used_bytes;
 
   return (
     <>
@@ -121,8 +153,8 @@ function BucketSettings() {
           >
             <div style={{ fontSize: 14, fontWeight: 600 }}>Quota bucket</div>
             <div style={{ fontSize: 13, color: "var(--dim)", marginTop: 5 }}>
-              Đang dùng {fmt(bucket.used)}. Đặt 0 hoặc tick "Không giới hạn" để
-              bucket chỉ bị chặn bởi quota tài khoản.
+              Đang dùng {fmt(bucket.used_bytes)}. Đặt 0 hoặc tick "Không giới
+              hạn" để bucket chỉ bị chặn bởi quota tài khoản.
             </div>
             <div style={{ marginTop: 16 }}>
               <QuotaFields
@@ -143,8 +175,9 @@ function BucketSettings() {
                   textWrap: "pretty",
                 }}
               >
-                Bucket đang dùng {fmt(bucket.used)}; đặt quota {fmt(newMax)} sẽ
-                chặn mọi lần ghi mới cho tới khi bạn xoá bớt object.
+                Bucket đang dùng {fmt(bucket.used_bytes)}; đặt quota{" "}
+                {fmt(newMax)} sẽ chặn mọi lần ghi mới cho tới khi bạn xoá bớt
+                object.
               </div>
             )}
             <div
@@ -156,10 +189,8 @@ function BucketSettings() {
             >
               <button
                 type="button"
-                onClick={() => {
-                  // TODO(slice#7): PATCH /api/buckets/:pid {max_bytes}
-                  toast("Đã lưu");
-                }}
+                disabled={busy}
+                onClick={() => void save()}
                 style={{
                   height: 34,
                   padding: "0 16px",
@@ -225,15 +256,11 @@ function BucketSettings() {
       {deleting && (
         <ConfirmDangerModal
           title={`Xoá bucket ${bucket.name}`}
-          body="Hành động này xoá cascade toàn bộ metadata object trong bucket. Không hoàn tác được."
+          body="Chỉ xoá được bucket rỗng: server từ chối nếu còn object."
           target={bucket.name}
           confirmLabel="Xoá bucket"
           onClose={() => setDeleting(false)}
-          onConfirm={() => {
-            // TODO(slice#7): DELETE /api/buckets/:pid
-            setDeleting(false);
-            navigate({ to: "/buckets" });
-          }}
+          onConfirm={() => void destroy()}
         />
       )}
     </>

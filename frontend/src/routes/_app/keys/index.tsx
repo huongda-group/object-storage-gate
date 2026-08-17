@@ -30,6 +30,7 @@ import {
   monoStyle,
   useRowMenu,
 } from "../../../components/ui";
+import { run } from "../../../lib/api-client";
 import { pill, shortId } from "../../../lib/format";
 import {
   type ApiKey,
@@ -105,36 +106,47 @@ function AccessKeys() {
 
   async function toggleStatus(k: ApiKey) {
     const next = k.status === "disabled" ? "active" : "disabled";
-    await updateKey(k.pid, { status: next });
+    const ok = await run(() => updateKey(k.pid, { status: next }), {
+      onError: (m) => toast(m, "danger"),
+    });
+    if (!ok) return;
     await reload();
     toast(next === "active" ? "Đã mở lại key" : "Đã tạm khoá key");
   }
 
   async function doRotate(k: ApiKey) {
-    const fresh = await rotateKey(k.pid);
-    await reload();
+    const fresh = await run(() => rotateKey(k.pid), {
+      onError: (m) => toast(m, "danger"),
+    });
+    if (!fresh) return;
+    // Show the secret before reloading: the server keeps only a hash, so a secret dropped
+    // because the reload failed is unrecoverable.
     setSecret({
       rotated: true,
       keyId: fresh.access_key_id,
       secret: fresh.secret,
     });
+    await run(reload, { onError: (m) => toast(m, "danger") });
   }
 
   async function doRevoke(pid: string) {
-    await revokeKey(pid);
-    await reload();
+    const ok = await run(() => revokeKey(pid), {
+      onError: (m) => toast(m, "danger"),
+    });
     setRevoking(null);
+    if (ok === undefined) return;
+    await reload();
     toast("Đã thu hồi key", "danger");
   }
 
   async function copyId(id: string) {
     try {
       await navigator.clipboard?.writeText(id);
+      setCopied(id);
+      toast("Đã copy vào clipboard");
     } catch {
-      // clipboard unavailable — still confirm to the user
+      toast("Trình duyệt không cho copy. Chọn và copy thủ công.", "danger");
     }
-    setCopied(id);
-    toast("Đã copy vào clipboard");
     setTimeout(() => setCopied(null), 2600);
   }
 
@@ -143,14 +155,19 @@ function AccessKeys() {
     const perms =
       PRESETS.find((p) => p.name === form.preset)?.perms ??
       (["read", "list"] as Permission[]);
-    const fresh = await apiCreateKey({
-      label: form.label,
-      permissions: perms,
-      prefixes: form.prefix.trim() ? [form.prefix.trim()] : [],
-      expires_at: form.expiryDays
-        ? new Date(Date.now() + form.expiryDays * 86_400_000).toISOString()
-        : null,
-    });
+    const fresh = await run(
+      () =>
+        apiCreateKey({
+          label: form.label,
+          permissions: perms,
+          prefixes: form.prefix.trim() ? [form.prefix.trim()] : [],
+          expires_at: form.expiryDays
+            ? new Date(Date.now() + form.expiryDays * 86_400_000).toISOString()
+            : null,
+        }),
+      { onError: (m) => toast(m, "danger") },
+    );
+    if (!fresh) return;
     await reload();
     setForm(null);
     setSecret({

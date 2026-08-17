@@ -26,7 +26,8 @@ export const createUser = (body: {
     body: JSON.stringify(body),
   });
 
-export const getUser = (pid: string) => api<AdminUser>(`/api/admin/users/${pid}`);
+export const getUser = (pid: string) =>
+  api<AdminUser>(`/api/admin/users/${pid}`);
 
 export const updateUser = (
   pid: string,

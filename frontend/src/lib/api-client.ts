@@ -6,7 +6,8 @@ function messageFor(e: unknown): string {
     if (e.status >= 500) return "Máy chủ gặp lỗi. Thử lại sau.";
     if (e.status === 403) return "Bạn không có quyền thực hiện thao tác này.";
     if (e.status === 404) return "Không tìm thấy. Có thể nó đã bị xoá.";
-    if (e.status === 429) return "Thao tác quá nhanh. Chờ một chút rồi thử lại.";
+    if (e.status === 429)
+      return "Thao tác quá nhanh. Chờ một chút rồi thử lại.";
     return e.message || "Yêu cầu không hợp lệ.";
   }
   if (e instanceof TypeError) return "Không kết nối được máy chủ.";

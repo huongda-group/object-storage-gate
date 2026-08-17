@@ -89,6 +89,17 @@ export const changePassword = (
 
 export const current = () => api<CurrentUser>("/api/auth/current");
 
+export type Summary = {
+  used_bytes: number;
+  reserved_bytes: number;
+  max_bytes: number;
+  bucket_count: number;
+  object_count: number;
+  active_key_count: number;
+};
+
+export const getSummary = () => api<Summary>("/api/me/summary");
+
 export function currentCached(): Promise<CurrentUser> {
   if (!currentCache) {
     currentCache = current().catch((e) => {

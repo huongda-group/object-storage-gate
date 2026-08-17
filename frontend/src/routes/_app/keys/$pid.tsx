@@ -13,6 +13,7 @@ import {
   TableWrap,
   monoStyle,
 } from "../../../components/ui";
+import { run } from "../../../lib/api-client";
 import { pill, shortId } from "../../../lib/format";
 import {
   type ApiKey,
@@ -96,23 +97,48 @@ function KeyDetail() {
   const status = raw?.status ?? "active";
 
   async function savePerms() {
-    adopt(await updateKey(pid, { permissions: perms }));
+    const updated = await run(() => updateKey(pid, { permissions: perms }), {
+      onError: (m) => toast(m, "danger"),
+    });
+    if (!updated) return;
+    adopt(updated);
     toast("Đã lưu quyền");
   }
 
   async function savePrefixes() {
-    adopt(await updateKey(pid, { prefixes }));
+    const updated = await run(() => updateKey(pid, { prefixes }), {
+      onError: (m) => toast(m, "danger"),
+    });
+    if (!updated) return;
+    adopt(updated);
     toast("Đã lưu prefix");
   }
 
   async function doRotate() {
-    const fresh = await rotateKey(pid);
+    const fresh = await run(() => rotateKey(pid), {
+      onError: (m) => toast(m, "danger"),
+    });
+    if (!fresh) return;
     setSecret({ keyId: fresh.access_key_id, secret: fresh.secret });
   }
 
   async function doDisable() {
-    adopt(await updateKey(pid, { status: "disabled" }));
+    const updated = await run(() => updateKey(pid, { status: "disabled" }), {
+      onError: (m) => toast(m, "danger"),
+    });
+    if (!updated) return;
+    adopt(updated);
     toast("Đã tạm khoá key");
+  }
+
+  // A failed revoke used to leave the confirm modal open with no message at all, so the user
+  // clicked again.
+  async function doRevoke() {
+    const ok = await run(() => revokeKey(pid), {
+      onError: (m) => toast(m, "danger"),
+    });
+    setRevoking(false);
+    if (ok !== undefined) navigate({ to: "/keys" });
   }
 
   const header = (
@@ -663,12 +689,7 @@ function KeyDetail() {
           target={raw.access_key_id}
           confirmLabel="Thu hồi key"
           onClose={() => setRevoking(false)}
-          onConfirm={() => {
-            void revokeKey(pid).then(() => {
-              setRevoking(false);
-              navigate({ to: "/keys" });
-            });
-          }}
+          onConfirm={() => void doRevoke()}
         />
       )}
     </>

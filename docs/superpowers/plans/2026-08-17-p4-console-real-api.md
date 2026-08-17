@@ -55,7 +55,7 @@
 - Consumes: `Caller` (P1 task 3), `buckets::Model::list_for_user`, `find_by_user_and_name`.
 - Produces: `GET /api/buckets`, `POST /api/buckets`, `GET /api/buckets/{pid}`, `PATCH /api/buckets/{pid}`, `DELETE /api/buckets/{pid}`. `BucketResponse` giữ nguyên hình dạng đang có ở `src/views/api.rs`.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Tạo `tests/requests/buckets.rs`:
 
@@ -223,12 +223,12 @@ async fn another_users_bucket_is_not_found() {
 
 Thêm `mod buckets;` vào `tests/requests/mod.rs`.
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod requests::buckets 2>&1 | tail -20`
 Expected: FAIL — `POST /api/buckets` trả 404.
 
-- [ ] **Step 3: Thêm helper model nếu thiếu**
+- [x] **Step 3: Thêm helper model nếu thiếu**
 
 Kiểm `src/models/buckets.rs` đã có `create_for_user`, `find_by_pid_for_user`,
 `validate_name` chưa:
@@ -259,7 +259,7 @@ Thiếu cái nào thì thêm. `find_by_pid_for_user` bắt buộc phải có và
     }
 ```
 
-- [ ] **Step 4: Viết view**
+- [x] **Step 4: Viết view**
 
 Tạo `src/views/buckets.rs`, dời `BucketResponse` từ `src/views/api.rs` sang và
 thêm trường console cần:
@@ -304,7 +304,7 @@ cho khớp.
 Trong `src/views/api.rs`, bỏ `BucketResponse` cũ và re-export:
 `pub use super::buckets::BucketResponse;`
 
-- [ ] **Step 5: Viết controller**
+- [x] **Step 5: Viết controller**
 
 Tạo `src/controllers/buckets.rs`:
 
@@ -452,7 +452,7 @@ handler `list_buckets` — nó đã chuyển sang đây.
 
 Đăng ký trong `src/controllers/mod.rs` và `src/app.rs`.
 
-- [ ] **Step 6: Chạy test ba backend**
+- [x] **Step 6: Chạy test ba backend**
 
 ```bash
 cargo test --test mod requests::buckets 2>&1 | tail -20
@@ -460,7 +460,7 @@ DATABASE_URL=postgres://loco:loco@localhost:5432/osg_test cargo test 2>&1 | tail
 DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test 2>&1 | tail -5
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ tests/
@@ -486,7 +486,7 @@ Bối cảnh: `frontend/src/routes/_app/profile.tsx:153-161` lấy tên và emai
 `useShell()` nhưng số byte đã dùng, số bucket và số key hoạt động thì lấy từ
 `mock.ts`. Một người xem trang hồ sơ của chính mình đang đọc số của người khác.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Thêm vào `tests/requests/api.rs`:
 
@@ -574,12 +574,12 @@ async fn patch_me_ignores_role_and_quota() {
 }
 ```
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cargo test --test mod requests::api::summary 2>&1 | tail -10`
 Expected: FAIL — 404.
 
-- [ ] **Step 3: Viết view**
+- [x] **Step 3: Viết view**
 
 Thêm vào `src/views/api.rs`:
 
@@ -595,7 +595,7 @@ pub struct SummaryResponse {
 }
 ```
 
-- [ ] **Step 4: Viết handler**
+- [x] **Step 4: Viết handler**
 
 Trong `src/controllers/api.rs`:
 
@@ -652,7 +652,7 @@ Ghi chú: `list_for_user` của access_keys trả về model kèm policy — ki�
 về thật bằng `grep -n "pub async fn list_for_user" -A3 src/models/access_keys.rs`
 và sửa `.filter(|k| ...)` cho khớp (có thể là tuple `(Model, Vec<String>, Vec<String>)`).
 
-- [ ] **Step 5: Chạy test và commit**
+- [x] **Step 5: Chạy test và commit**
 
 ```bash
 cargo test --test mod requests::api 2>&1 | tail -10
@@ -682,7 +682,7 @@ Bối cảnh: mọi mutation trên hai màn hình thật (`keys/index.tsx:332,34
 400/500 thì user không thấy gì cả. Tệ nhất `keys/$pid.tsx:666`: revoke lỗi thì
 `setRevoking(false)` không bao giờ chạy, modal treo, user bấm lại.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Tạo `frontend/src/lib/api-client.test.ts`:
 
@@ -723,12 +723,12 @@ describe("run", () => {
 });
 ```
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cd frontend && corepack pnpm vitest run src/lib/api-client.test.ts`
 Expected: FAIL — module không tồn tại.
 
-- [ ] **Step 3: Viết wrapper**
+- [x] **Step 3: Viết wrapper**
 
 Tạo `frontend/src/lib/api-client.ts`:
 
@@ -767,7 +767,7 @@ export async function run<T>(
 }
 ```
 
-- [ ] **Step 4: Áp vào mọi mutation hiện có**
+- [x] **Step 4: Áp vào mọi mutation hiện có**
 
 Tìm hết:
 
@@ -803,7 +803,7 @@ async function revoke() {
 }
 ```
 
-- [ ] **Step 5: Sửa thứ tự trong rotate key**
+- [x] **Step 5: Sửa thứ tự trong rotate key**
 
 `keys/index.tsx:114-120` gọi `rotateKey()` rồi `await reload()` **trước khi** đặt
 secret vào state. `reload()` lỗi là secret bị vứt và modal không mở, để lại một
@@ -818,7 +818,7 @@ setSecret(rotated.secret);   // Set it first: a failed reload must not lose the 
 await run(reload, { onError: (m) => toast(m, "danger") });
 ```
 
-- [ ] **Step 6: Sửa copy clipboard báo sai**
+- [x] **Step 6: Sửa copy clipboard báo sai**
 
 `keys/index.tsx:130-139`, `SecretRevealModal.tsx:48-57`, `api.tsx:75-82`,
 `buckets/$name/index.tsx:170-179`, `admin/buckets.tsx:727-734` đều `catch {}` rồi
@@ -834,7 +834,7 @@ try {
 }
 ```
 
-- [ ] **Step 7: Sửa tải file CSV secret**
+- [x] **Step 7: Sửa tải file CSV secret**
 
 `SecretRevealModal.tsx:59-68` tạo thẻ `<a>` rời, click, rồi `revokeObjectURL`
 đồng bộ. Firefox đòi thẻ phải nằm trong document, và revoke cùng tick đua với
@@ -852,7 +852,7 @@ document.body.removeChild(a);
 setTimeout(() => URL.revokeObjectURL(url), 0);
 ```
 
-- [ ] **Step 8: Chạy kiểm và commit**
+- [x] **Step 8: Chạy kiểm và commit**
 
 ```bash
 cd frontend
@@ -884,7 +884,7 @@ object URL revocation."
 - Consumes: task 1 (bucket CRUD), task 2 (`/api/me/summary`), task 3 (`run`), P1 task 4 (`/api/admin/users`).
 - Produces: `lib/buckets.ts` xuất `listBuckets`, `createBucket`, `getBucket`, `updateBucket`, `deleteBucket`. `lib/admin.ts` xuất `listUsers`, `createUser`, `getUser`, `updateUser`, `setUserPassword`, `deleteUser`.
 
-- [ ] **Step 1: Viết hai module gọi API**
+- [x] **Step 1: Viết hai module gọi API**
 
 `frontend/src/lib/buckets.ts`:
 
@@ -972,7 +972,7 @@ export const deleteUser = (pid: string) =>
   api<void>(`/api/admin/users/${pid}`, { method: "DELETE" });
 ```
 
-- [ ] **Step 2: Nối `/buckets`**
+- [x] **Step 2: Nối `/buckets`**
 
 `frontend/src/routes/_app/buckets/index.tsx` — bỏ `import { BUCKETS } from "../../../lib/mock"`, thay bằng `loader` gọi `listBuckets()`, và nối ba mutation:
 
@@ -997,14 +997,14 @@ một `PATCH`. Thay bằng dòng giải thích:
 </div>
 ```
 
-- [ ] **Step 3: Nối `/buckets/$name/settings`**
+- [x] **Step 3: Nối `/buckets/$name/settings`**
 
 Chuyển route param từ `$name` sang `$pid` để khớp API — sửa mọi `Link` trỏ tới nó.
 Nối "Lưu quota" vào `updateBucket(pid, { max_bytes })`, và công tắc public vào
 `updateBucket(pid, { public_enabled })`. Nút xoá gọi `deleteBucket` rồi điều hướng
 về `/buckets`.
 
-- [ ] **Step 4: Nối `/` và `/profile`**
+- [x] **Step 4: Nối `/` và `/profile`**
 
 Dashboard (`_app/index.tsx`) hiện đọc `ACCOUNT`, `ACCOUNT_STATS`, `BUCKETS`,
 `KEYS`, `ENDPOINT`, `REGION` từ mock. Thay bằng loader gọi song song:
@@ -1033,7 +1033,7 @@ const endpoint = globalThis.location.origin;
 
 Profile (`_app/profile.tsx:153-161`) đổi ba số sang `getSummary()`.
 
-- [ ] **Step 5: Nối `/admin/users` và `/admin/users/$pid`**
+- [x] **Step 5: Nối `/admin/users` và `/admin/users/$pid`**
 
 Đổi route param từ email sang `pid` — `admin/index.tsx:126,226` và
 `admin/users/index.tsx` đang truyền `params={{ pid: u.email }}`, nên mọi lịch sử
@@ -1052,7 +1052,7 @@ Mật khẩu tạm sinh ra khi tạo user phải hiển thị đúng một lần
 disable/revoke ở đó là toast trần không đổi state, và không có endpoint admin nào
 cho key của người khác. Thay bằng dòng "Chưa khả dụng".
 
-- [ ] **Step 6: Nối `/admin`**
+- [x] **Step 6: Nối `/admin`**
 
 `admin/index.tsx` hiện đọc `ADMIN_STATS` với các chuỗi cứng "8 user",
 "2.41M object", "2.3 TiB". Thay bằng số đếm được từ `listUsers()`:
@@ -1064,7 +1064,7 @@ loader: () => listUsers(),
 Tổng dung lượng cộng từ `used_bytes` của các user. Bỏ thẻ "oversubscribe 127%" —
 không có nguồn dữ liệu nào tính được nó cho tới khi có pool thật.
 
-- [ ] **Step 7: Kiểm bằng tay**
+- [x] **Step 7: Kiểm bằng tay**
 
 ```bash
 cargo loco start &
@@ -1075,7 +1075,7 @@ cd frontend && corepack pnpm dev
 user. Mỗi thao tác phải: đổi thật trong DB (kiểm bằng `psql`), và hiện lỗi rõ
 ràng khi thất bại.
 
-- [ ] **Step 8: Chạy kiểm và commit**
+- [x] **Step 8: Chạy kiểm và commit**
 
 ```bash
 cd frontend
@@ -1111,7 +1111,7 @@ Hai màn hình còn lại phụ thuộc tầng S3 chưa tồn tại:
   secret của provider rồi cất vào state React. Admin dán credential S3 thật vào
   một form vứt chúng đi khi tải lại trang.
 
-- [ ] **Step 1: Viết component**
+- [x] **Step 1: Viết component**
 
 ```tsx
 type Props = { title: string; reason: string };
@@ -1133,7 +1133,7 @@ export function ComingSoon({ title, reason }: Props) {
 }
 ```
 
-- [ ] **Step 2: Thay hai màn hình**
+- [x] **Step 2: Thay hai màn hình**
 
 `buckets/$name/index.tsx` — giữ phần header bucket (tên, quota, endpoint) vì nó
 lấy từ `getBucket()` thật, thay phần duyệt object bằng:
@@ -1156,7 +1156,7 @@ lấy từ `getBucket()` thật, thay phần duyệt object bằng:
 
 Xoá toàn bộ form và state của hai màn — không giữ lại code chết.
 
-- [ ] **Step 3: Chạy kiểm và commit**
+- [x] **Step 3: Chạy kiểm và commit**
 
 ```bash
 cd frontend && corepack pnpm biome check && corepack pnpm exec tsc --noEmit && corepack pnpm build
@@ -1184,7 +1184,7 @@ reload threw away."
 - Consumes: task 4 và 5 đã gỡ mọi lời gọi.
 - Produces: `UNITS` sống trong `components/ui.tsx`; không file nào import `lib/mock`.
 
-- [ ] **Step 1: Viết test bảo vệ**
+- [x] **Step 1: Viết test bảo vệ**
 
 Tạo `frontend/src/lib/no-mock.test.ts`:
 
@@ -1217,12 +1217,12 @@ describe("no fixture data in the app", () => {
 });
 ```
 
-- [ ] **Step 2: Chạy để chắc nó fail**
+- [x] **Step 2: Chạy để chắc nó fail**
 
 Run: `cd frontend && corepack pnpm vitest run src/lib/no-mock.test.ts`
 Expected: FAIL với ít nhất `src/components/ui.tsx` trong danh sách.
 
-- [ ] **Step 3: Dời `UNITS`**
+- [x] **Step 3: Dời `UNITS`**
 
 `components/ui.tsx:5` đang `import type { UNITS } from "../lib/mock"`. Định nghĩa
 tại chỗ:
@@ -1235,13 +1235,13 @@ export type Unit = (typeof UNITS)[number];
 
 Kiểm giá trị thật trong `mock.ts` trước khi chép — `grep -n "UNITS" src/lib/mock.ts`.
 
-- [ ] **Step 4: Xoá mock**
+- [x] **Step 4: Xoá mock**
 
 ```bash
 cd frontend && git rm src/lib/mock.ts
 ```
 
-- [ ] **Step 5: Xác nhận bundle sạch**
+- [x] **Step 5: Xác nhận bundle sạch**
 
 ```bash
 corepack pnpm build
@@ -1250,7 +1250,7 @@ grep -rl "osgate.vn\|an.nguyen\|246.5\|oversubscribe" dist/ && echo "FIXTURE STI
 
 Expected: `clean`.
 
-- [ ] **Step 6: Chạy toàn bộ và commit**
+- [x] **Step 6: Chạy toàn bộ và commit**
 
 ```bash
 corepack pnpm vitest run && corepack pnpm biome check && corepack pnpm exec tsc --noEmit

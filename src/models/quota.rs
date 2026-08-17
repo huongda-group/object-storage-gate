@@ -4,7 +4,7 @@
 //! The bucket is never scanned to total its size: `ListObjects` over a bucket with a million objects is not a quota check, it is an outage.
 //!
 //! Every mutation here is a single `UPDATE ... WHERE <guard>` plus a `rows_affected` check.
-//! That is atomic on Postgres, MySQL and SQLite alike, and it is why no lock appears anywhere in this file — advisory locks are Postgres-only and out of bounds.
+//! That is atomic on Postgres, `MySQL` and `SQLite` alike, and it is why no lock appears anywhere in this file — advisory locks are Postgres-only and out of bounds.
 use loco_rs::prelude::*;
 use sea_orm::{sea_query::Expr, TransactionTrait};
 
@@ -328,7 +328,8 @@ pub async fn reconcile(db: &DatabaseConnection) -> ModelResult<ReconcileReport> 
             .await?;
 
         let real_bytes: i64 = rows.iter().map(|o| o.size).sum();
-        let real_count = rows.len() as i64;
+        // A bucket with more than i64::MAX objects cannot exist, so the saturating branch is unreachable — but a wrapping cast is not something to leave in a quota path.
+        let real_count = i64::try_from(rows.len()).unwrap_or(i64::MAX);
 
         if bucket.used_bytes == real_bytes
             && bucket.object_count == real_count

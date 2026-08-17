@@ -120,7 +120,7 @@ async fn list_by_prefix_treats_wildcards_literally() {
     assert_eq!(percent[0].object_key, "a%/three");
 }
 
-/// An empty prefix lists the whole bucket, which is what ListObjectsV2 with no prefix means.
+/// An empty prefix lists the whole bucket, which is what `ListObjectsV2` with no prefix means.
 #[tokio::test]
 #[serial]
 async fn list_by_prefix_with_empty_prefix_lists_everything() {

@@ -16,6 +16,7 @@ mod m20260817_000003_column_lengths;
 mod m20260817_000004_binary_collation;
 mod m20260817_000005_hot_indexes;
 mod m20260817_000006_quota_checks;
+mod m20260818_000001_pools;
 
 pub struct Migrator;
 
@@ -38,6 +39,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260817_000004_binary_collation::Migration),
             Box::new(m20260817_000005_hot_indexes::Migration),
             Box::new(m20260817_000006_quota_checks::Migration),
+            Box::new(m20260818_000001_pools::Migration),
             // inject-above (do not remove this comment)
         ]
     }

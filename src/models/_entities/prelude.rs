@@ -5,4 +5,5 @@ pub use super::access_key_prefixes::Entity as AccessKeyPrefixes;
 pub use super::access_keys::Entity as AccessKeys;
 pub use super::buckets::Entity as Buckets;
 pub use super::objects::Entity as Objects;
+pub use super::pools::Entity as Pools;
 pub use super::users::Entity as Users;

@@ -7,4 +7,5 @@ pub mod access_key_prefixes;
 pub mod access_keys;
 pub mod buckets;
 pub mod objects;
+pub mod pools;
 pub mod users;

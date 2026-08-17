@@ -127,7 +127,7 @@ impl Model {
                 Ok(row) => return Ok(row),
                 // Another writer inserted the same key between our update and our insert.
                 // Loop once more; the update finds the row this time.
-                Err(_) if attempt == 0 => continue,
+                Err(_) if attempt == 0 => (),
                 Err(e) => return Err(e.into()),
             }
         }
@@ -177,7 +177,7 @@ impl Model {
     /// Objects in a bucket whose key starts with `prefix`, up to `limit`, ordered by key (`ListObjectsV2` backing query).
     ///
     /// Uses a range comparison rather than `LIKE`.
-    /// sea-orm's `starts_with` builds `format!("{}%", s)` with no escaping, so `%` and `_` in a caller-supplied prefix act as wildcards, and SQLite's `LIKE` is case-insensitive for ASCII while Postgres's is not.
+    /// sea-orm's `starts_with` builds `format!("{}%", s)` with no escaping, so `%` and `_` in a caller-supplied prefix act as wildcards, and `SQLite`'s `LIKE` is case-insensitive for ASCII while Postgres's is not.
     /// A range is literal on all three backends and, unlike a `LIKE`, can use the `(bucket_id, object_key)` index.
     ///
     /// # Errors

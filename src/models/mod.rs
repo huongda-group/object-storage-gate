@@ -5,5 +5,6 @@ pub mod access_keys;
 pub mod buckets;
 pub mod crypto;
 pub mod objects;
+pub mod pools;
 pub mod quota;
 pub mod users;

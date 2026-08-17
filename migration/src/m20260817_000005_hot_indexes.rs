@@ -5,7 +5,7 @@ pub struct Migration;
 
 /// `(index name, table, column, unique)`.
 ///
-/// Postgres and SQLite do not index foreign-key columns automatically — only MySQL InnoDB does — and `users.pid` had no index at all despite `find_by_pid` running on every authenticated request.
+/// Postgres and `SQLite` do not index foreign-key columns automatically — only `MySQL` `InnoDB` does — and `users.pid` had no index at all despite `find_by_pid` running on every authenticated request.
 const INDEXES: &[(&str, &str, &str, bool)] = &[
     ("idx_users_pid", "users", "pid", true),
     ("idx_users_api_key_prefix", "users", "api_key_prefix", false),
@@ -34,7 +34,7 @@ impl MigrationTrait for Migration {
             if *unique {
                 idx.unique();
             }
-            m.create_index(idx.to_owned()).await?;
+            m.create_index(idx.clone()).await?;
         }
         Ok(())
     }

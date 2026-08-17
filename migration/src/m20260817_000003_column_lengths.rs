@@ -4,7 +4,7 @@ use sea_orm_migration::prelude::*;
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
-/// `ColType::String` becomes `varchar(255)` on MySQL and an unbounded `varchar` on Postgres, so the same value is accepted on one backend and rejected on another.
+/// `ColType::String` becomes `varchar(255)` on `MySQL` and an unbounded `varchar` on Postgres, so the same value is accepted on one backend and rejected on another.
 /// These lengths are the ones the application already promises: `MAX_PREFIX_LEN` is 512, and S3 allows object keys up to 1024 bytes.
 const WIDENINGS: &[(&str, &str, u32)] = &[
     ("access_key_prefixes", "prefix", 512),
@@ -12,11 +12,11 @@ const WIDENINGS: &[(&str, &str, u32)] = &[
     ("buckets", "name", 255),
 ];
 
-/// The composite unique index that has to be rebuilt around the `object_key` widening on MySQL.
+/// The composite unique index that has to be rebuilt around the `object_key` widening on `MySQL`.
 const IDX_OBJECTS_BUCKET_KEY: &str = "idx_objects_bucket_key";
 
 /// A scratch index on `objects.bucket_id`, created only so the foreign key has something to lean on while the composite index is dropped.
-/// InnoDB refuses to drop the last index a foreign key can use, and the composite one is it.
+/// `InnoDB` refuses to drop the last index a foreign key can use, and the composite one is it.
 const IDX_OBJECTS_FK_SCRATCH: &str = "idx_objects_bucket_fk_scratch";
 
 #[async_trait::async_trait]

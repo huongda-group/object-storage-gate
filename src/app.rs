@@ -18,11 +18,29 @@ use std::path::Path;
 use crate::{
     controllers,
     models::_entities::{
-        access_key_permissions, access_key_prefixes, access_keys, buckets, objects, users,
+        access_key_permissions, access_key_prefixes, access_keys, buckets, objects, pools, users,
     },
     tasks,
     workers::downloader::DownloadWorker,
 };
+
+/// Loads one fixture file.
+///
+/// ponytail: loco's `db::seed` ends with `reset_autoincrement`, which hard-errors on `MySQL` — but it fires only after every row is already inserted, and `InnoDB` advances the `AUTO_INCREMENT` counter on explicit-id inserts by itself, so nothing is left undone.
+/// Swallow that one error, nothing else.
+/// Upgrade path: patch loco upstream to no-op there instead of erroring.
+async fn seed_one<A>(ctx: &AppContext, base: &Path, file: &str) -> Result<()>
+where
+    A: sea_orm::ActiveModelTrait + Send + Sync,
+    for<'de> <<A as sea_orm::ActiveModelTrait>::Entity as sea_orm::EntityTrait>::Model:
+        sea_orm::IntoActiveModel<A> + serde::de::Deserialize<'de>,
+{
+    let path = base.join(file).display().to_string();
+    match db::seed::<A>(&ctx.db, &path).await {
+        Err(Error::Message(msg)) if msg.contains("Unsupported database backend: MySQL") => Ok(()),
+        other => other,
+    }
+}
 
 pub struct App;
 #[async_trait]
@@ -101,20 +119,16 @@ impl Hooks for App {
         truncate_table(&ctx.db, access_key_permissions::Entity).await?;
         truncate_table(&ctx.db, access_key_prefixes::Entity).await?;
         truncate_table(&ctx.db, access_keys::Entity).await?;
+        // Buckets before pools: the foreign key is RESTRICT, so a pool with rows pointing at it cannot be emptied first.
         truncate_table(&ctx.db, buckets::Entity).await?;
+        truncate_table(&ctx.db, pools::Entity).await?;
         truncate_table(&ctx.db, users::Entity).await?;
         Ok(())
     }
     async fn seed(ctx: &AppContext, base: &Path) -> Result<()> {
-        let path = base.join("users.yaml").display().to_string();
-        // ponytail: loco's db::seed ends with reset_autoincrement, which hard-errors on MySQL — but it fires only after every row is already inserted, and InnoDB advances the AUTO_INCREMENT counter on explicit-id inserts by itself, so nothing is left undone.
-        // Swallow that one error, nothing else.
-        // Upgrade path: patch loco upstream to no-op there instead of erroring.
-        match db::seed::<users::ActiveModel>(&ctx.db, &path).await {
-            Err(Error::Message(msg)) if msg.contains("Unsupported database backend: MySQL") => {
-                Ok(())
-            }
-            other => other,
-        }
+        seed_one::<users::ActiveModel>(ctx, base, "users.yaml").await?;
+        // Pools after users and before anything that references them.
+        seed_one::<pools::ActiveModel>(ctx, base, "pools.yaml").await?;
+        Ok(())
     }
 }

@@ -111,7 +111,8 @@ async fn concurrent_put_object_on_the_same_key_does_not_error() {
     let user = users::Model::find_by_email(&db, "user1@example.com")
         .await
         .unwrap();
-    let bucket = buckets::Model::create(&db, user.id, "races", 0)
+    let pool_id = super::any_pool(&db).await;
+    let bucket = buckets::Model::create(&db, user.id, pool_id, "races", 0)
         .await
         .unwrap();
 

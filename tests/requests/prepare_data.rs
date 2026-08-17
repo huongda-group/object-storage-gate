@@ -1,6 +1,9 @@
 use axum::http::{HeaderName, HeaderValue};
 use loco_rs::{app::AppContext, hash, TestServer};
-use object_storage_gate::{models::users, views::auth::LoginResponse};
+use object_storage_gate::{
+    models::{pools, users},
+    views::auth::LoginResponse,
+};
 use sea_orm::{ActiveModelTrait, ActiveValue};
 
 const USER_EMAIL: &str = "test@loco.com";
@@ -63,6 +66,21 @@ pub async fn init_admin_login(request: &TestServer, ctx: &AppContext) -> LoggedI
     let token = login(request, "admin@loco.com", USER_PASSWORD).await;
 
     LoggedInUser { user, token }
+}
+
+/// A pool for tests that need to create a bucket. Returns the model, whose `pid` goes in the request body.
+pub async fn a_pool(ctx: &AppContext) -> pools::Model {
+    pools::Model::create(
+        &ctx.db,
+        &pools::CreateParams {
+            name: "main".to_string(),
+            provider: pools::PROVIDER_MINIO.to_string(),
+            physical_bucket: "osg-main".to_string(),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("create test pool")
 }
 
 pub fn auth_header(token: &str) -> (HeaderName, HeaderValue) {

@@ -2443,6 +2443,7 @@ version = "0.1.0"
 dependencies = [
  "loco-rs",
  "sea-orm-migration",
+ "uuid",
 ]
 
 [[package]]

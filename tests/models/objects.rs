@@ -17,7 +17,11 @@ async fn bucket(db: &sea_orm::DatabaseConnection) -> i32 {
     .await
     .unwrap()
     .id;
-    buckets::Model::create(db, uid, "bkt", 0).await.unwrap().id
+    let pool_id = super::any_pool(db).await;
+    buckets::Model::create(db, uid, pool_id, "bkt", 0)
+        .await
+        .unwrap()
+        .id
 }
 
 #[tokio::test]
@@ -97,7 +101,8 @@ async fn list_by_prefix_treats_wildcards_literally() {
     let user = users::Model::find_by_email(db, "user1@example.com")
         .await
         .unwrap();
-    let bucket = buckets::Model::create(db, user.id, "wildcards", 0)
+    let pool_id = super::any_pool(db).await;
+    let bucket = buckets::Model::create(db, user.id, pool_id, "wildcards", 0)
         .await
         .unwrap();
 
@@ -131,7 +136,8 @@ async fn list_by_prefix_with_empty_prefix_lists_everything() {
     let user = users::Model::find_by_email(db, "user1@example.com")
         .await
         .unwrap();
-    let bucket = buckets::Model::create(db, user.id, "everything", 0)
+    let pool_id = super::any_pool(db).await;
+    let bucket = buckets::Model::create(db, user.id, pool_id, "everything", 0)
         .await
         .unwrap();
 

@@ -12,12 +12,13 @@ use super::prepare_data;
 async fn owner_can_create_list_retune_and_delete_a_bucket() {
     request::<App, _, _>(|request, ctx| async move {
         let user = prepare_data::init_user_login(&request, &ctx).await;
+        let pool = prepare_data::a_pool(&ctx).await;
 
         let (k, v) = prepare_data::auth_header(&user.token);
         let created = request
             .post("/api/buckets")
             .add_header(k, v)
-            .json(&serde_json::json!({ "name": "media-cdn", "max_bytes": 1_073_741_824i64 }))
+            .json(&serde_json::json!({ "name": "media-cdn", "pool_id": pool.pid.to_string(), "max_bytes": 1_073_741_824i64 }))
             .await;
         assert_eq!(created.status_code(), 200);
 
@@ -60,13 +61,14 @@ async fn owner_can_create_list_retune_and_delete_a_bucket() {
 async fn bucket_names_are_validated_and_unique_per_owner() {
     request::<App, _, _>(|request, ctx| async move {
         let user = prepare_data::init_user_login(&request, &ctx).await;
+        let pool = prepare_data::a_pool(&ctx).await;
 
         for bad in ["", "ab", "has spaces", "UPPER", "-leading", "trailing-"] {
             let (k, v) = prepare_data::auth_header(&user.token);
             let res = request
                 .post("/api/buckets")
                 .add_header(k, v)
-                .json(&serde_json::json!({ "name": bad, "max_bytes": 0 }))
+                .json(&serde_json::json!({ "name": bad, "pool_id": pool.pid.to_string(), "max_bytes": 0 }))
                 .await;
             assert_eq!(res.status_code(), 400, "name {bad:?} should be rejected");
         }
@@ -75,7 +77,7 @@ async fn bucket_names_are_validated_and_unique_per_owner() {
         let first = request
             .post("/api/buckets")
             .add_header(k, v)
-            .json(&serde_json::json!({ "name": "taken", "max_bytes": 0 }))
+            .json(&serde_json::json!({ "name": "taken", "pool_id": pool.pid.to_string(), "max_bytes": 0 }))
             .await;
         assert_eq!(first.status_code(), 200);
 
@@ -83,7 +85,7 @@ async fn bucket_names_are_validated_and_unique_per_owner() {
         let dup = request
             .post("/api/buckets")
             .add_header(k, v)
-            .json(&serde_json::json!({ "name": "taken", "max_bytes": 0 }))
+            .json(&serde_json::json!({ "name": "taken", "pool_id": pool.pid.to_string(), "max_bytes": 0 }))
             .await;
         assert_ne!(dup.status_code(), 200, "duplicate name was accepted");
     })
@@ -96,12 +98,13 @@ async fn bucket_names_are_validated_and_unique_per_owner() {
 async fn quota_cannot_be_set_below_what_is_stored() {
     request::<App, _, _>(|request, ctx| async move {
         let user = prepare_data::init_user_login(&request, &ctx).await;
+        let pool = prepare_data::a_pool(&ctx).await;
 
         let (k, v) = prepare_data::auth_header(&user.token);
         let created = request
             .post("/api/buckets")
             .add_header(k, v)
-            .json(&serde_json::json!({ "name": "shrink", "max_bytes": 0 }))
+            .json(&serde_json::json!({ "name": "shrink", "pool_id": pool.pid.to_string(), "max_bytes": 0 }))
             .await;
         let pid = created.json::<serde_json::Value>()["pid"]
             .as_str()
@@ -132,12 +135,13 @@ async fn quota_cannot_be_set_below_what_is_stored() {
 async fn a_non_empty_bucket_cannot_be_deleted() {
     request::<App, _, _>(|request, ctx| async move {
         let user = prepare_data::init_user_login(&request, &ctx).await;
+        let pool = prepare_data::a_pool(&ctx).await;
 
         let (k, v) = prepare_data::auth_header(&user.token);
         let created = request
             .post("/api/buckets")
             .add_header(k, v)
-            .json(&serde_json::json!({ "name": "not-empty", "max_bytes": 0 }))
+            .json(&serde_json::json!({ "name": "not-empty", "pool_id": pool.pid.to_string(), "max_bytes": 0 }))
             .await;
         let pid = created.json::<serde_json::Value>()["pid"]
             .as_str()
@@ -167,12 +171,13 @@ async fn a_non_empty_bucket_cannot_be_deleted() {
 async fn another_users_bucket_is_not_found() {
     request::<App, _, _>(|request, ctx| async move {
         let owner = prepare_data::init_user_login(&request, &ctx).await;
+        let pool = prepare_data::a_pool(&ctx).await;
 
         let (k, v) = prepare_data::auth_header(&owner.token);
         let created = request
             .post("/api/buckets")
             .add_header(k, v)
-            .json(&serde_json::json!({ "name": "private", "max_bytes": 0 }))
+            .json(&serde_json::json!({ "name": "private", "pool_id": pool.pid.to_string(), "max_bytes": 0 }))
             .await;
         let pid = created.json::<serde_json::Value>()["pid"]
             .as_str()
@@ -219,12 +224,13 @@ async fn another_users_bucket_is_not_found() {
 async fn summary_counts_real_buckets_and_keys() {
     request::<App, _, _>(|request, ctx| async move {
         let user = prepare_data::init_user_login(&request, &ctx).await;
+        let pool = prepare_data::a_pool(&ctx).await;
 
         let (k, v) = prepare_data::auth_header(&user.token);
         request
             .post("/api/buckets")
             .add_header(k, v)
-            .json(&serde_json::json!({ "name": "one", "max_bytes": 0 }))
+            .json(&serde_json::json!({ "name": "one", "pool_id": pool.pid.to_string(), "max_bytes": 0 }))
             .await;
 
         let (k, v) = prepare_data::auth_header(&user.token);

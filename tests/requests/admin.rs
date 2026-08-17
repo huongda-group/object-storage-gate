@@ -4,6 +4,7 @@ use object_storage_gate::{
     models::{buckets, objects, users},
     views::auth::LoginResponse,
 };
+use sea_orm::EntityTrait;
 use serial_test::serial;
 
 use super::prepare_data;
@@ -327,7 +328,8 @@ async fn deleting_a_user_removes_their_buckets_and_objects() {
         let target = users::Model::find_by_email(&ctx.db, "leftovers@congty.vn")
             .await
             .unwrap();
-        let bucket = buckets::Model::create(&ctx.db, target.id, "leftovers", 0)
+        let pool = prepare_data::a_pool(&ctx).await;
+        let bucket = buckets::Model::create(&ctx.db, target.id, pool.id, "leftovers", 0)
             .await
             .unwrap();
         objects::Model::put_object(&ctx.db, bucket.id, "a/b.txt", 5, "e", "text/plain")
@@ -341,8 +343,9 @@ async fn deleting_a_user_removes_their_buckets_and_objects() {
             .await;
         assert_eq!(res.status_code(), 200);
 
-        // No system pool inherited the bucket.
-        assert!(buckets::Model::find_system_by_name(&ctx.db, "leftovers")
+        // The bucket went with its owner rather than being left behind ownerless.
+        assert!(buckets::Entity::find_by_id(bucket.id)
+            .one(&ctx.db)
             .await
             .unwrap()
             .is_none());

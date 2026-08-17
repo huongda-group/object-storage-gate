@@ -1,14 +1,23 @@
 //! Bucket CRUD for the account that owns them.
 //!
-//! System pools (`user_id IS NULL`) are not reachable here at all — they belong to the admin tree.
+//! Pools are not reachable here at all — they belong to the admin tree.
+use std::collections::HashMap;
+
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{controllers::api::Caller, models::buckets, views::buckets::BucketDetail};
+use crate::{
+    controllers::api::Caller,
+    models::{buckets, pools},
+    views::buckets::BucketDetail,
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CreateParams {
     pub name: String,
+    /// The pool's `pid`, not its row id: the API never exposes an incrementing id.
+    /// Required — a bucket with no pool has nowhere to proxy to.
+    pub pool_id: String,
     /// Required on purpose: `0` means unlimited, and unlimited must be a decision, never a default.
     pub max_bytes: i64,
 }
@@ -29,10 +38,26 @@ async fn load(db: &DatabaseConnection, user_id: i32, pid: &str) -> Result<bucket
         .map_err(|_| Error::NotFound)
 }
 
+/// The pool a bucket belongs to, for the response shaper.
+/// Looked up rather than joined so `index` can resolve N buckets against one pool query instead of N.
+async fn pool_of(db: &DatabaseConnection, bucket: &buckets::Model) -> Result<pools::Model> {
+    pools::Model::find_by_id(db, bucket.pool_id)
+        .await
+        .map_err(|_| Error::NotFound)
+}
+
 #[debug_handler]
 async fn index(caller: Caller, State(ctx): State<AppContext>) -> Result<Response> {
     let rows = buckets::Model::list_for_user(&ctx.db, caller.user.id).await?;
-    format::json(rows.iter().map(BucketDetail::new).collect::<Vec<_>>())
+    // One query for every pool, not one per bucket.
+    let pools = pools::Model::list_all(&ctx.db).await?;
+    let by_id: HashMap<i32, &pools::Model> = pools.iter().map(|p| (p.id, p)).collect();
+
+    let out: Vec<BucketDetail> = rows
+        .iter()
+        .map(|b| BucketDetail::new(b, by_id.get(&b.pool_id).copied()))
+        .collect();
+    format::json(out)
 }
 
 #[debug_handler]
@@ -41,10 +66,21 @@ async fn create(
     State(ctx): State<AppContext>,
     Json(params): Json<CreateParams>,
 ) -> Result<Response> {
-    let bucket = buckets::Model::create(&ctx.db, caller.user.id, &params.name, params.max_bytes)
+    let pool = pools::Model::find_by_pid(&ctx.db, &params.pool_id)
         .await
-        .map_err(|e| bad_request(&e))?;
-    format::json(BucketDetail::new(&bucket))
+        .map_err(|_| Error::BadRequest("unknown pool".to_string()))?;
+
+    let bucket = buckets::Model::create(
+        &ctx.db,
+        caller.user.id,
+        pool.id,
+        &params.name,
+        params.max_bytes,
+    )
+    .await
+    .map_err(|e| bad_request(&e))?;
+
+    format::json(BucketDetail::new(&bucket, Some(&pool)))
 }
 
 #[debug_handler]
@@ -54,7 +90,8 @@ async fn show(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let bucket = load(&ctx.db, caller.user.id, &pid).await?;
-    format::json(BucketDetail::new(&bucket))
+    let pool = pool_of(&ctx.db, &bucket).await?;
+    format::json(BucketDetail::new(&bucket, Some(&pool)))
 }
 
 #[debug_handler]
@@ -88,8 +125,9 @@ async fn update(
         am.public_enabled = ActiveValue::set(public_enabled);
     }
     let updated = am.update(&ctx.db).await?;
+    let pool = pool_of(&ctx.db, &updated).await?;
 
-    format::json(BucketDetail::new(&updated))
+    format::json(BucketDetail::new(&updated, Some(&pool)))
 }
 
 #[debug_handler]

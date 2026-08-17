@@ -99,9 +99,16 @@ async fn pat_can_manage_keys() {
 async fn usage_and_buckets_report_the_account() {
     request::<App, _, _>(|request, ctx| async move {
         let user = prepare_data::init_user_login(&request, &ctx).await;
-        object_storage_gate::models::buckets::Model::create(&ctx.db, user.user.id, "my-bucket", 0)
-            .await
-            .unwrap();
+        let pool = prepare_data::a_pool(&ctx).await;
+        object_storage_gate::models::buckets::Model::create(
+            &ctx.db,
+            user.user.id,
+            pool.id,
+            "my-bucket",
+            0,
+        )
+        .await
+        .unwrap();
 
         let token = pat(&request, &user.token).await;
         let (ak, av) = prepare_data::auth_header(&token);

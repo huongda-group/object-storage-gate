@@ -50,7 +50,8 @@ async fn accepts_an_object_key_at_the_s3_maximum() {
     let user = users::Model::find_by_email(db, "user1@example.com")
         .await
         .unwrap();
-    let bucket = buckets::Model::create(db, user.id, "keys-are-long", 0)
+    let pool_id = super::any_pool(db).await;
+    let bucket = buckets::Model::create(db, user.id, pool_id, "keys-are-long", 0)
         .await
         .unwrap();
 
@@ -74,7 +75,8 @@ async fn object_keys_are_case_sensitive() {
     let user = users::Model::find_by_email(db, "user1@example.com")
         .await
         .unwrap();
-    let bucket = buckets::Model::create(db, user.id, "case-matters", 0)
+    let pool_id = super::any_pool(db).await;
+    let bucket = buckets::Model::create(db, user.id, pool_id, "case-matters", 0)
         .await
         .unwrap();
 
@@ -113,10 +115,11 @@ async fn bucket_names_reject_uppercase() {
         .await
         .unwrap();
 
-    buckets::Model::create(db, user.id, "media", 0)
+    let pool_id = super::any_pool(db).await;
+    buckets::Model::create(db, user.id, pool_id, "media", 0)
         .await
         .unwrap();
-    let second = buckets::Model::create(db, user.id, "Media", 0).await;
+    let second = buckets::Model::create(db, user.id, pool_id, "Media", 0).await;
 
     assert!(second.is_err(), "an uppercase bucket name must be rejected");
 }

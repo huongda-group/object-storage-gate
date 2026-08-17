@@ -15,7 +15,8 @@ async fn setup(db: &DatabaseConnection, user_max: i64, bucket_max: i64) -> (i32,
     am.max_bytes = ActiveValue::set(user_max);
     let user = am.update(db).await.unwrap();
 
-    let bucket = buckets::Model::create(db, user.id, "quota-test", bucket_max)
+    let pool_id = super::any_pool(db).await;
+    let bucket = buckets::Model::create(db, user.id, pool_id, "quota-test", bucket_max)
         .await
         .unwrap();
 
@@ -157,18 +158,30 @@ async fn concurrent_reserves_cannot_both_win_the_last_slot() {
     assert_eq!(wins, 1, "both reservations fit into a 100-byte bucket");
 }
 
-/// A bucket with no owner is a system pool: outside every account quota.
+/// A bucket row with no owner charges no account quota.
+///
+/// Nothing in the API creates one any more — `create_system` went away with the pools table — but the column is still nullable, so the branch is still reachable from a hand-written row or an old backup.
+/// Inserted directly here on purpose: this is the state the quota engine must survive, not a state it should offer.
 #[tokio::test]
 #[serial]
-async fn a_system_pool_has_no_account_quota() {
+async fn an_ownerless_bucket_has_no_account_quota() {
     let boot = boot_test::<App>().await.unwrap();
     let db = &boot.app_context.db;
     seed::<App>(&boot.app_context).await.unwrap();
 
-    let pool = buckets::Model::create_system(db, "archive", 0)
-        .await
-        .unwrap();
-    let r = quota::reserve(db, pool.id, 5000).await.unwrap();
+    let pool_id = super::any_pool(db).await;
+    let orphan = buckets::ActiveModel {
+        user_id: ActiveValue::set(None),
+        pool_id: ActiveValue::set(pool_id),
+        name: ActiveValue::set("archive".to_string()),
+        max_bytes: ActiveValue::set(0),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let r = quota::reserve(db, orphan.id, 5000).await.unwrap();
     assert_eq!(r.user_id, None);
     quota::commit(db, &r, 1).await.unwrap();
 }

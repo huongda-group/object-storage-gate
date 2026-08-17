@@ -32,7 +32,9 @@ today.
 | | State |
 |---|---|
 | Data foundation — schema, models, encrypted secrets | **done** (slice #1) |
-| JWT user auth — register, verify, login, forgot/reset, magic link | **done** (loco starter, extended) |
+| JWT user auth — first-run setup, login, forced password change | **done** |
+| Self-registration, email verification, magic link, password reset | **removed** 2026-08-17 — accounts are admin-created |
+| Admin user management API | **done** (P1) |
 | Console SPA — every screen; auth, access keys and the API page wired to the real API | **done**; buckets/objects/admin screens still on mocks |
 | S3 conformance test suite | **done**, runs against a real store today |
 | SigV4 verify + user/bucket resolution | slice #2 |
@@ -132,6 +134,18 @@ curl -X POST "$OSG_HOST/api/keys" \
 | DELETE | `/api/keys/{pid}` | revoke permanently (terminal — no way back) |
 | GET | `/api/buckets` | buckets owned by the account |
 | GET | `/api/usage` | used / reserved / max bytes, object and bucket counts |
+| POST | `/api/me/password` | replace your own password, including an admin-issued temporary one |
+
+Admin-only, all gated by `AdminCaller` on the server:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/admin/users` | every account |
+| POST | `/api/admin/users` | create an account — `max_bytes` is required, no default |
+| GET | `/api/admin/users/{pid}` | one account |
+| PATCH | `/api/admin/users/{pid}` | name, role, quota |
+| POST | `/api/admin/users/{pid}/password` | issue a new temporary password |
+| DELETE | `/api/admin/users/{pid}` | remove an account |
 
 A key belonging to another account returns `404`, not `403`. Permissions are limited
 to `read`, `write`, `delete`, `list`, `multipart`, `presigned`; prefixes may not
@@ -151,7 +165,11 @@ be absolute or contain `..`.
 
 Two credential systems, deliberately separate:
 
-- **JWT** authenticates humans in the console (`/api/auth/*`).
+- **JWT** authenticates humans in the console (`/api/auth/*`). There is no
+  self-registration: the first account comes from `POST /api/auth/setup` on an
+  empty instance, and every later one from `POST /api/admin/users`. A newly
+  created account carries a temporary password and cannot use any endpoint but
+  `POST /api/me/password` until it replaces it.
 - **SigV4 access keys** authenticate S3 clients. The gateway verifies the
   client's `OSG…` key, then re-signs upstream with the bucket's own store
   credentials. Client keys never reach the object store.

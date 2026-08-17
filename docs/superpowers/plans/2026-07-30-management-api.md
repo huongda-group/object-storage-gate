@@ -1,5 +1,9 @@
 # Management API + Access Key API Implementation Plan
 
+> **Cập nhật 2026-08-17:** `POST /api/auth/register` và toàn bộ luồng mail mà
+> plan này giả định đã bị xoá. Xem
+> `docs/superpowers/specs/2026-08-17-go-live-hardening-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Superseded on the `/api/v1` prefix (2026-07-31).** After this plan was executed, the version prefix was dropped: everything moved to one `/api/*` tree behind a `Caller` extractor that accepts either JWT or PAT, and `src/controllers/{keys,api_v1}.rs` were merged into `src/controllers/api.rs`. The spec is the current source of truth; the `/api/v1` paths below are kept as the record of what was built first.

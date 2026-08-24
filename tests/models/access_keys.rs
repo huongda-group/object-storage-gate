@@ -366,7 +366,8 @@ async fn rotate_copies_policy_and_disables_old() {
     assert_eq!(perms, vec!["list".to_string(), "read".to_string()]);
     assert_eq!(new.prefixes(db).await.unwrap(), vec!["ci/".to_string()]);
 
-    let reloaded = access_keys::Model::find_by_access_key_id(db, &old.access_key_id)
+    // Loaded by pid, not by access key id: find_by_access_key_id is the authentication lookup and treats a disabled key as absent, which is exactly what is being asserted here.
+    let reloaded = access_keys::Model::find_by_pid_for_user(db, &old.pid.to_string(), uid)
         .await
         .unwrap();
     assert_eq!(reloaded.status, access_keys::KEY_DISABLED);
@@ -392,4 +393,128 @@ async fn expired_key_cannot_be_rotated() {
 
     let err = lapsed.rotate(db).await.unwrap_err().to_string();
     assert!(err.contains("expired"), "unexpected message: {err}");
+}
+
+/// P3 flagged this and left it open: prefix `team` also authorised `teamsecret/`, so a key handed to one team could read another team's folder.
+#[test]
+fn prefix_matching_respects_the_separator() {
+    use object_storage_gate::models::access_keys::prefix_allows;
+
+    // Inside.
+    assert!(prefix_allows("img/", "img/a.png"));
+    assert!(prefix_allows("img/", "img/nested/a.png"));
+    assert!(prefix_allows("img", "img"));
+    assert!(prefix_allows("img", "img/a.png"));
+
+    // The bug.
+    assert!(!prefix_allows("team", "teamsecret/x"));
+    assert!(!prefix_allows("img", "imgsecret/a.png"));
+
+    // Not a prefix at all.
+    assert!(!prefix_allows("img/", "docs/a.png"));
+    assert!(!prefix_allows("img/", "im"));
+
+    // validate_prefixes refuses an empty prefix, so this can only come from a hand-edited row.
+    // It denies rather than allows: fail-closed is the right direction for a policy row nobody meant to create.
+    assert!(!prefix_allows("", "anything"));
+    assert!(object_storage_gate::models::access_keys::validate_prefixes(&[String::new()]).is_err());
+}
+
+#[tokio::test]
+#[serial]
+async fn a_key_with_no_prefixes_allows_everything() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+
+    let user = users::Model::find_by_email(db, "user1@example.com")
+        .await
+        .unwrap();
+    let (key, _) = access_keys::Model::create_key(
+        db,
+        user.id,
+        &access_keys::CreateKeyParams {
+            label: "primary".to_string(),
+            expires_at: None,
+            permissions: vec![access_keys::ACTION_READ.to_string()],
+            prefixes: vec![],
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(key.allows_key(db, "anything/at/all").await.unwrap());
+    assert!(key
+        .allows_action(db, access_keys::ACTION_READ)
+        .await
+        .unwrap());
+    assert!(!key
+        .allows_action(db, access_keys::ACTION_WRITE)
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
+#[serial]
+async fn a_scoped_key_allows_only_its_folders() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+
+    let user = users::Model::find_by_email(db, "user1@example.com")
+        .await
+        .unwrap();
+    let (key, _) = access_keys::Model::create_key(
+        db,
+        user.id,
+        &access_keys::CreateKeyParams {
+            label: "readonly".to_string(),
+            expires_at: None,
+            permissions: vec![access_keys::ACTION_READ.to_string()],
+            prefixes: vec!["img/".to_string(), "docs/".to_string()],
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(key.allows_key(db, "img/a.png").await.unwrap());
+    assert!(key.allows_key(db, "docs/b.pdf").await.unwrap());
+    assert!(!key.allows_key(db, "backup/c.tar").await.unwrap());
+}
+
+/// A revoked credential does not exist, as far as authentication is concerned.
+#[tokio::test]
+#[serial]
+async fn find_by_access_key_id_ignores_revoked_and_expired() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+
+    let user = users::Model::find_by_email(db, "user1@example.com")
+        .await
+        .unwrap();
+    let (key, _) = access_keys::Model::create_key(
+        db,
+        user.id,
+        &access_keys::CreateKeyParams {
+            label: "primary".to_string(),
+            expires_at: None,
+            permissions: vec![access_keys::ACTION_READ.to_string()],
+            prefixes: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let id = key.access_key_id.clone();
+
+    assert!(access_keys::Model::find_by_access_key_id(db, &id)
+        .await
+        .is_ok());
+
+    key.revoke(db).await.unwrap();
+
+    // Still a row, but the lookup must not hand it back.
+    assert!(access_keys::Model::find_by_access_key_id(db, &id)
+        .await
+        .is_err());
 }

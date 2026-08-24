@@ -21,6 +21,17 @@ pub const ACTION_LIST: &str = "list";
 pub const ACTION_MULTIPART: &str = "multipart";
 pub const ACTION_PRESIGNED: &str = "presigned";
 
+/// Whether `prefix` authorises `key`.
+///
+/// A prefix must land on a path boundary. Without that rule a key scoped to `team` also authorises `teamsecret/`, which is a different tenant's folder as far as the person who issued the key is concerned.
+#[must_use]
+pub fn prefix_allows(prefix: &str, key: &str) -> bool {
+    key.starts_with(prefix)
+        && (prefix.ends_with('/')
+            || key.len() == prefix.len()
+            || key.as_bytes()[prefix.len()] == b'/')
+}
+
 pub const LABELS: &[&str] = &["primary", "backup", "temporary", "ci", "readonly"];
 pub const ACTIONS: &[&str] = &[
     ACTION_READ,
@@ -237,17 +248,48 @@ impl Model {
             .ok_or(ModelError::EntityNotFound)
     }
 
+    /// Finds an access key by the public id a client presents, but only while it is usable.
+    ///
+    /// A revoked, disabled or expired key must read as absent: that is a credential-validity question, not an authorisation one, and one answer for all three does not confirm to the caller whether the key exists.
+    ///
     /// # Errors
-    /// Returns `EntityNotFound` if no key matches.
+    /// Returns an error when no usable key has that id, or on DB failure.
     pub async fn find_by_access_key_id(
         db: &DatabaseConnection,
         access_key_id: &str,
     ) -> ModelResult<Self> {
-        Entity::find()
+        let key = Entity::find()
             .filter(Column::AccessKeyId.eq(access_key_id))
             .one(db)
             .await?
-            .ok_or_else(|| ModelError::EntityNotFound)
+            .ok_or(ModelError::EntityNotFound)?;
+
+        if key.is_usable() {
+            Ok(key)
+        } else {
+            Err(ModelError::EntityNotFound)
+        }
+    }
+
+    /// Whether this key's prefix policy authorises `key`.
+    /// A key with no prefixes is scoped to the whole bucket.
+    ///
+    /// # Errors
+    /// Returns an error on DB failure.
+    pub async fn allows_key(&self, db: &DatabaseConnection, key: &str) -> ModelResult<bool> {
+        let prefixes = self.prefixes(db).await?;
+        if prefixes.is_empty() {
+            return Ok(true);
+        }
+        Ok(prefixes.iter().any(|p| prefix_allows(p, key)))
+    }
+
+    /// Whether this key carries `action`.
+    ///
+    /// # Errors
+    /// Returns an error on DB failure.
+    pub async fn allows_action(&self, db: &DatabaseConnection, action: &str) -> ModelResult<bool> {
+        Ok(self.permissions(db).await?.iter().any(|p| p == action))
     }
 
     /// Decrypt the stored secret for `SigV4` verification.

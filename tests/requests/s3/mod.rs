@@ -1,7 +1,10 @@
 //! The S3 data-plane test harness.
 //!
 //! Every test here runs against a real app instance with a mock object store behind it, so a test can assert the thing that matters most: that the store was never touched.
+mod copy;
 mod listing;
+mod multipart;
+mod presigned;
 mod read;
 mod scoping;
 mod wire;
@@ -358,9 +361,58 @@ impl TestGateway {
         self.send("PUT", &encoded, &headers, body).await
     }
 
+    /// Fetches a presigned URL with no credentials at all, the way a browser or curl would.
+    pub async fn fetch_presigned(
+        &self,
+        signer: &TestSigner,
+        path: &str,
+        expires: u64,
+    ) -> TestResponse {
+        let encoded = encode_path(path);
+        let query = signer.presign("GET", &encoded, expires);
+        // Host is the one header a presigned signature covers, and a browser always sends it — so the test must too, or the mismatch looks like a broken signer.
+        self.send(
+            "GET",
+            &format!("{encoded}?{query}"),
+            &[("host".to_string(), signer.host.clone())],
+            b"",
+        )
+        .await
+    }
+
+    /// A presigned URL minted at a chosen instant, for the expiry tests.
+    pub async fn fetch_presigned_at(
+        &self,
+        signer: &TestSigner,
+        path: &str,
+        expires: u64,
+        at: DateTime<Utc>,
+    ) -> TestResponse {
+        let encoded = encode_path(path);
+        let query = signer.presign_at(at, "GET", &encoded, expires);
+        self.send(
+            "GET",
+            &format!("{encoded}?{query}"),
+            &[("host".to_string(), signer.host.clone())],
+            b"",
+        )
+        .await
+    }
+
     /// No signing at all — a browser navigation, as far as the gateway is concerned.
     pub async fn raw_get(&self, path: &str, headers: &[(String, String)]) -> TestResponse {
         self.send("GET", path, headers, b"").await
+    }
+
+    /// A GET with a caller-supplied query string and no headers, for pointing a presigned signature at the wrong thing.
+    pub async fn raw_get_query(&self, path: &str, query: &str) -> TestResponse {
+        self.send(
+            "GET",
+            &format!("{}?{query}", encode_path(path)),
+            &[("host".to_string(), "gateway.test".to_string())],
+            b"",
+        )
+        .await
     }
 
     /// An S3 client that presented credentials the gateway cannot use.

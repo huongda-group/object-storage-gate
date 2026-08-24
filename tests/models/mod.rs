@@ -1,6 +1,7 @@
 mod access_keys;
 mod buckets;
 mod concurrency;
+mod multipart_uploads;
 mod objects;
 mod pools;
 mod portability;

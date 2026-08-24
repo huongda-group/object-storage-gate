@@ -167,15 +167,12 @@ impl TestSigner {
 
     /// A presigned query string, without the leading `?`.
     ///
-    /// Unused until G6 wires presigned URLs; kept here because the signer is the piece those tests will need and writing it beside the header form is where the two shapes can be compared.
-    #[allow(dead_code)]
     #[must_use]
     pub fn presign(&self, method: &str, path: &str, expires_secs: u64) -> String {
         let at = Utc::now();
         self.presign_at(at, method, path, expires_secs)
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn presign_at(
         &self,

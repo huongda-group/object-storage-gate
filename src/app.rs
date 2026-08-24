@@ -18,7 +18,8 @@ use std::path::Path;
 use crate::{
     controllers,
     models::_entities::{
-        access_key_permissions, access_key_prefixes, access_keys, buckets, objects, pools, users,
+        access_key_permissions, access_key_prefixes, access_keys, buckets, multipart_uploads,
+        objects, pools, users,
     },
     tasks,
     workers::downloader::DownloadWorker,
@@ -120,6 +121,7 @@ impl Hooks for App {
     }
     async fn truncate(ctx: &AppContext) -> Result<()> {
         truncate_table(&ctx.db, objects::Entity).await?;
+        truncate_table(&ctx.db, multipart_uploads::Entity).await?;
         truncate_table(&ctx.db, access_key_permissions::Entity).await?;
         truncate_table(&ctx.db, access_key_prefixes::Entity).await?;
         truncate_table(&ctx.db, access_keys::Entity).await?;

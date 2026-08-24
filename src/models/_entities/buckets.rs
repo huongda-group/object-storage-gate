@@ -25,6 +25,8 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::multipart_uploads::Entity")]
+    MultipartUploads,
     #[sea_orm(has_many = "super::objects::Entity")]
     Objects,
     #[sea_orm(
@@ -43,6 +45,12 @@ pub enum Relation {
         on_delete = "SetNull"
     )]
     Users,
+}
+
+impl Related<super::multipart_uploads::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::MultipartUploads.def()
+    }
 }
 
 impl Related<super::objects::Entity> for Entity {

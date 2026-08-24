@@ -321,6 +321,144 @@ pub fn list_buckets(owner_id: &str, owner_name: &str, buckets: &[(String, String
     out
 }
 
+/// Renders `InitiateMultipartUploadResult`.
+#[must_use]
+pub fn initiate_multipart(bucket: &str, key: &str, upload_id: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
+         <Bucket>{}</Bucket><Key>{}</Key><UploadId>{}</UploadId>\
+         </InitiateMultipartUploadResult>",
+        escape(bucket),
+        escape(key),
+        escape(upload_id)
+    )
+}
+
+/// Renders `CompleteMultipartUploadResult`.
+///
+/// `Location` names the logical bucket and key only. A URL carrying the physical bucket would hand the client the layout the gateway exists to hide.
+#[must_use]
+pub fn complete_multipart(bucket: &str, key: &str, etag: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
+         <Location>/{}/{}</Location><Bucket>{}</Bucket><Key>{}</Key><ETag>{}</ETag>\
+         </CompleteMultipartUploadResult>",
+        escape(bucket),
+        escape(key),
+        escape(bucket),
+        escape(key),
+        escape(etag)
+    )
+}
+
+/// Parses the part list a client sends with `CompleteMultipartUpload`.
+///
+/// # Errors
+/// `MalformedXML` when the body is not a `<CompleteMultipartUpload>` document or names no parts.
+pub fn parse_complete_request(body: &[u8]) -> Result<Vec<(u32, String)>, S3Error> {
+    let text = std::str::from_utf8(body)
+        .map_err(|_| S3Error::MalformedXml("request body is not valid UTF-8".to_string()))?;
+    let numbers = extract(text, "PartNumber");
+    let etags = extract(text, "ETag");
+    if numbers.is_empty() || numbers.len() != etags.len() {
+        return Err(S3Error::MalformedXml(
+            "expected a <CompleteMultipartUpload> document listing PartNumber and ETag pairs"
+                .to_string(),
+        ));
+    }
+    numbers
+        .into_iter()
+        .zip(etags)
+        .map(|(n, e)| {
+            n.parse::<u32>()
+                .map(|n| (n, e))
+                .map_err(|_| S3Error::MalformedXml("PartNumber must be a number".to_string()))
+        })
+        .collect()
+}
+
+/// Renders the body the gateway sends upstream to complete an upload.
+#[must_use]
+pub fn complete_request(parts: &[(u32, String)]) -> String {
+    let mut out = String::from("<CompleteMultipartUpload>");
+    for (n, etag) in parts {
+        let _ = write!(
+            out,
+            "<Part><PartNumber>{n}</PartNumber><ETag>{}</ETag></Part>",
+            escape(etag)
+        );
+    }
+    out.push_str("</CompleteMultipartUpload>");
+    out
+}
+
+/// Renders `CopyObjectResult`, which is also the shape `UploadPartCopy` answers with under a different root.
+#[must_use]
+pub fn copy_result(root: &str, etag: &str, modified: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <{root} xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
+         <LastModified>{}</LastModified><ETag>{}</ETag></{root}>",
+        escape(modified),
+        escape(etag)
+    )
+}
+
+/// Renders `ListPartsResult`.
+#[must_use]
+pub fn list_parts(
+    bucket: &str,
+    key: &str,
+    upload_id: &str,
+    parts: &[(u32, String, i64)],
+) -> String {
+    let mut out = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListPartsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+    );
+    let _ = write!(
+        out,
+        "<Bucket>{}</Bucket><Key>{}</Key><UploadId>{}</UploadId><IsTruncated>false</IsTruncated>",
+        escape(bucket),
+        escape(key),
+        escape(upload_id)
+    );
+    for (n, etag, size) in parts {
+        let _ = write!(
+            out,
+            "<Part><PartNumber>{n}</PartNumber><ETag>{}</ETag><Size>{size}</Size></Part>",
+            escape(etag)
+        );
+    }
+    out.push_str("</ListPartsResult>");
+    out
+}
+
+/// Renders `ListMultipartUploadsResult`.
+#[must_use]
+pub fn list_multipart_uploads(bucket: &str, uploads: &[(String, String, String)]) -> String {
+    let mut out = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListMultipartUploadsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+    );
+    let _ = write!(
+        out,
+        "<Bucket>{}</Bucket><IsTruncated>false</IsTruncated>",
+        escape(bucket)
+    );
+    for (key, upload_id, initiated) in uploads {
+        let _ = write!(
+            out,
+            "<Upload><Key>{}</Key><UploadId>{}</UploadId><Initiated>{}</Initiated></Upload>",
+            escape(key),
+            escape(upload_id),
+            escape(initiated)
+        );
+    }
+    out.push_str("</ListMultipartUploadsResult>");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,6 +516,32 @@ mod tests {
         let quiet = delete_result(&deleted, &errors, true);
         assert!(!quiet.contains("<Deleted>"));
         assert!(quiet.contains("<Code>AccessDenied</Code>"));
+    }
+
+    #[test]
+    fn a_complete_request_parses_its_part_list() {
+        let parts = parse_complete_request(
+            br"<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>&quot;a&quot;</ETag></Part><Part><PartNumber>2</PartNumber><ETag>&quot;b&quot;</ETag></Part></CompleteMultipartUpload>",
+        )
+        .unwrap();
+        assert_eq!(
+            parts,
+            vec![(1, "\"a\"".to_string()), (2, "\"b\"".to_string())]
+        );
+
+        assert!(parse_complete_request(b"<CompleteMultipartUpload/>").is_err());
+        assert!(parse_complete_request(b"nonsense").is_err());
+    }
+
+    /// The Location a client gets must name the logical bucket, never the physical one.
+    #[test]
+    fn a_complete_result_never_names_the_physical_bucket() {
+        let body = complete_multipart("media-cdn", "img/a.png", "\"e\"");
+        assert!(
+            body.contains("<Location>/media-cdn/img/a.png</Location>"),
+            "{body}"
+        );
+        assert!(!body.contains("osg-main"));
     }
 
     #[test]

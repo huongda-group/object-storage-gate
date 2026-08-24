@@ -155,6 +155,26 @@ pub async fn release(db: &DatabaseConnection, reservation: &Reservation) -> Mode
     Ok(())
 }
 
+/// Describes a hold that already exists, without taking a new one.
+///
+/// Multipart accumulates its reservation across many `UploadPart` calls, so by the time `Abort` or `Complete` runs there is no `Reservation` value left to hand back — only a total in `multipart_uploads.reserved_bytes`.
+/// This rebuilds the value from that total so `release` and `commit` stay the only code that moves quota.
+///
+/// # Errors
+///
+/// Returns an error when the bucket is gone, or a DB error.
+pub async fn held(db: &DatabaseConnection, bucket_id: i32, bytes: i64) -> ModelResult<Reservation> {
+    let bucket = buckets::Entity::find_by_id(bucket_id)
+        .one(db)
+        .await?
+        .ok_or(ModelError::EntityNotFound)?;
+    Ok(Reservation {
+        bucket_id,
+        user_id: bucket.user_id,
+        bytes,
+    })
+}
+
 /// Turns a reservation into stored bytes once the upload has landed.
 ///
 /// `delta_objects` is `1` for a new object and `0` for an overwrite, and the caller is the only one who knows which.

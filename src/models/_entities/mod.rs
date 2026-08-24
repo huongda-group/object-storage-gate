@@ -6,6 +6,7 @@ pub mod access_key_permissions;
 pub mod access_key_prefixes;
 pub mod access_keys;
 pub mod buckets;
+pub mod multipart_uploads;
 pub mod objects;
 pub mod pools;
 pub mod users;

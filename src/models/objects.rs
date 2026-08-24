@@ -10,7 +10,8 @@ pub use super::_entities::objects::{ActiveModel, Column, Entity, Model};
 ///
 /// Increments the last code point that can be incremented, dropping trailing ones that cannot.
 /// Returns `None` when no such bound exists, in which case the caller keeps only the lower bound — every remaining key sorts after the prefix anyway.
-fn prefix_upper_bound(prefix: &str) -> Option<String> {
+#[must_use]
+pub fn prefix_upper_bound(prefix: &str) -> Option<String> {
     let mut chars: Vec<char> = prefix.chars().collect();
     while let Some(last) = chars.pop() {
         if let Some(next) = char::from_u32(u32::from(last) + 1) {

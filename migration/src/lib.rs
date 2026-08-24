@@ -18,6 +18,7 @@ mod m20260817_000005_hot_indexes;
 mod m20260817_000006_quota_checks;
 mod m20260818_000001_pools;
 mod m20260818_000002_bucket_pool;
+mod m20260818_000003_multipart_uploads;
 
 pub struct Migrator;
 
@@ -42,6 +43,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260817_000006_quota_checks::Migration),
             Box::new(m20260818_000001_pools::Migration),
             Box::new(m20260818_000002_bucket_pool::Migration),
+            Box::new(m20260818_000003_multipart_uploads::Migration),
             // inject-above (do not remove this comment)
         ]
     }

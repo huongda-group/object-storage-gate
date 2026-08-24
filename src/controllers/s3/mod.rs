@@ -4,7 +4,9 @@
 //! So each `(method, path-shape)` gets one handler that reads the query and dispatches. That layer is forced by the protocol, not chosen.
 //!
 //! It is also where audit belongs (G7): it is the only place that sees both an auth failure and a result.
+pub mod copy;
 pub mod listing;
+pub mod multipart;
 pub mod object;
 
 use std::sync::OnceLock;
@@ -156,19 +158,18 @@ async fn bucket_get(State(ctx): State<AppContext>, req: Request) -> Response {
     if param(&query, "list-type") == Some("2") {
         return listing::list_objects_v2(&ctx, &parts, &rid).await;
     }
-    let (action, what) = if has_param(&query, "uploads") {
-        (
-            access_keys::ACTION_MULTIPART,
-            "ListMultipartUploads is not implemented yet",
-        )
-    } else {
-        // ListObjects V1 differs from V2 only in the pagination token names, and aws-cli, boto3 and rclone all send V2.
-        (
-            access_keys::ACTION_LIST,
-            "ListObjects (V1) is not supported; send list-type=2",
-        )
-    };
-    not_implemented_after_bucket_auth(&ctx, &parts, action, what, &rid).await
+    if has_param(&query, "uploads") {
+        return multipart::list_uploads(&ctx, &parts, &rid).await;
+    }
+    // ListObjects V1 differs from V2 only in the pagination token names, and aws-cli, boto3 and rclone all send V2.
+    not_implemented_after_bucket_auth(
+        &ctx,
+        &parts,
+        access_keys::ACTION_LIST,
+        "ListObjects (V1) is not supported; send list-type=2",
+        &rid,
+    )
+    .await
 }
 
 async fn bucket_head(State(ctx): State<AppContext>, req: Request) -> Response {
@@ -237,14 +238,7 @@ async fn object_get(State(ctx): State<AppContext>, req: Request) -> Response {
     let query = query_pairs(&parts);
 
     if has_param(&query, "uploadId") {
-        return not_implemented_after_auth(
-            &ctx,
-            &parts,
-            access_keys::ACTION_MULTIPART,
-            "ListParts is not implemented yet",
-            &rid,
-        )
-        .await;
+        return multipart::list_parts(&ctx, &parts, &rid).await;
     }
     object::get(&ctx, &parts, &rid).await
 }
@@ -268,28 +262,14 @@ async fn object_put(State(ctx): State<AppContext>, req: Request) -> Response {
     let is_copy = parts.headers.contains_key("x-amz-copy-source");
 
     if has_param(&query, "uploadId") && has_param(&query, "partNumber") {
-        return not_implemented_after_auth(
-            &ctx,
-            &parts,
-            access_keys::ACTION_MULTIPART,
-            if is_copy {
-                "UploadPartCopy is not implemented yet"
-            } else {
-                "UploadPart is not implemented yet"
-            },
-            &rid,
-        )
-        .await;
+        return if is_copy {
+            copy::upload_part_copy(&ctx, &parts, &rid).await
+        } else {
+            multipart::upload_part(&ctx, &parts, body, &rid).await
+        };
     }
     if is_copy {
-        return not_implemented_after_auth(
-            &ctx,
-            &parts,
-            access_keys::ACTION_WRITE,
-            "CopyObject is not implemented yet",
-            &rid,
-        )
-        .await;
+        return copy::copy_object(&ctx, &parts, &rid).await;
     }
 
     // The body is handed over unread: the reservation comes from Content-Length, so an over-quota
@@ -306,14 +286,28 @@ async fn object_post(State(ctx): State<AppContext>, req: Request) -> Response {
     let rid = request_id();
     let query = query_pairs(&parts);
 
-    let what = if has_param(&query, "uploads") {
-        "CreateMultipartUpload is not implemented yet"
-    } else if has_param(&query, "uploadId") {
-        "CompleteMultipartUpload is not implemented yet"
-    } else {
-        "POST on an object takes ?uploads or ?uploadId"
-    };
-    not_implemented_after_auth(&ctx, &parts, access_keys::ACTION_MULTIPART, what, &rid).await
+    if has_param(&query, "uploads") {
+        return multipart::create(&ctx, &parts, &rid).await;
+    }
+    if has_param(&query, "uploadId") {
+        let Ok(bytes) = axum::body::to_bytes(body, 8 * 1024 * 1024).await else {
+            return fail(
+                &parts.method,
+                &S3Error::MalformedXml("could not read the request body".to_string()),
+                parts.uri.path(),
+                &rid,
+            );
+        };
+        return multipart::complete(&ctx, &parts, bytes.to_vec(), &rid).await;
+    }
+    not_implemented_after_auth(
+        &ctx,
+        &parts,
+        access_keys::ACTION_MULTIPART,
+        "POST on an object takes ?uploads or ?uploadId",
+        &rid,
+    )
+    .await
 }
 
 async fn object_delete(State(ctx): State<AppContext>, req: Request) -> Response {
@@ -325,14 +319,7 @@ async fn object_delete(State(ctx): State<AppContext>, req: Request) -> Response 
     let query = query_pairs(&parts);
 
     if has_param(&query, "uploadId") {
-        return not_implemented_after_auth(
-            &ctx,
-            &parts,
-            access_keys::ACTION_MULTIPART,
-            "AbortMultipartUpload is not implemented yet",
-            &rid,
-        )
-        .await;
+        return multipart::abort(&ctx, &parts, &rid).await;
     }
     object::delete(&ctx, &parts, &rid).await
 }

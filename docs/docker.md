@@ -149,6 +149,27 @@ docker compose run --rm app object_storage_gate-cli db migrate
 docker compose up -d
 ```
 
+## Pool phải có credential trước khi gateway phục vụ được
+
+Migration `m20260818_000002_bucket_pool` tạo một pool tên `default` với
+`physical_bucket = 'CHANGE-ME'` và **không có credential** khi cài đặt đã có
+bucket từ trước. Mọi request S3 vào pool đó sẽ hỏng cho tới khi admin điền vào.
+
+Sau khi migrate:
+
+1. Đăng nhập console bằng tài khoản admin.
+2. Vào Admin → Pool. Pool `default` hiện `CHƯA CÓ CREDENTIAL` màu đỏ.
+3. Điền `physical_bucket` thật, `access_id`, `access_secret`, và `api_endpoint`
+   nếu không dùng AWS.
+
+Cài mới thì không có bucket nào nên không có pool `default`; tạo pool đầu tiên
+bằng tay ở cùng màn hình đó.
+
+Migration này `ALTER TABLE buckets` trên bảng có dữ liệu. Trên MySQL đó là một
+lần rebuild bảng, khoá ghi trong lúc chạy — `buckets` nhỏ nên nhanh, nhưng vẫn
+nên lên lịch. Và MySQL không rollback được DDL: nếu bước giữa chừng hỏng thì
+bảng nằm ở trạng thái dở dang, nên hãy dump trước.
+
 ## Sao lưu
 
 Chụp một bản dump trước mỗi lần rollout có migration. `cargo loco db dump` chỉ

@@ -143,6 +143,7 @@ curl -X POST "$OSG_HOST/api/keys" \
 | GET | `/api/usage` | used / reserved / max bytes, object and bucket counts |
 | POST | `/api/me/password` | replace your own password, including an admin-issued temporary one |
 | POST | `/api/token/rotate` | mint a personal access token — returned **once**, stored hashed |
+| GET | `/api/pools` | pool name and provider only, so a user can pick one when creating a bucket |
 
 Admin-only, all gated by `AdminCaller` on the server:
 
@@ -154,6 +155,11 @@ Admin-only, all gated by `AdminCaller` on the server:
 | PATCH | `/api/admin/users/{pid}` | name, role, quota |
 | POST | `/api/admin/users/{pid}/password` | issue a new temporary password |
 | DELETE | `/api/admin/users/{pid}` | remove an account |
+| GET | `/api/admin/pools` | every pool |
+| POST | `/api/admin/pools` | create a pool |
+| GET | `/api/admin/pools/{pid}` | one pool |
+| PATCH | `/api/admin/pools/{pid}` | config; a blank secret keeps the stored one |
+| DELETE | `/api/admin/pools/{pid}` | refused while any bucket uses it |
 
 A key belonging to another account returns `404`, not `403`. Permissions are limited
 to `read`, `write`, `delete`, `list`, `multipart`, `presigned`; prefixes may not
@@ -164,8 +170,8 @@ be absolute or contain `..`.
 | Table | Holds |
 |---|---|
 | `users` | account + `role` (`user` \| `admin`) + total quota (`max_bytes`, `used_bytes`, `reserved_bytes`); `0` bytes means unlimited |
-| `buckets` | a logical bucket. `user_id` NULL = **system pool**, gateway-wide and outside every user's quota. Per-bucket quota counters and `object_count`. Name unique per owner (`UNIQUE (COALESCE(user_id,0), name)`) |
-| `buckets` (store columns) | which object store this bucket proxies to: `provider`, `region`, `api_endpoint`, `access_id`, `access_secret_encrypted`, `public_enabled` |
+| `pools` | an upstream object store plus the physical bucket inside it: `name`, `provider`, `region`, `api_endpoint`, `physical_bucket`, `access_id`, `access_secret_encrypted`. A client can never address a pool, and the API never returns the secret |
+| `buckets` | a logical bucket. `pool_id` NOT NULL (`ON DELETE RESTRICT`) names the pool it proxies to. Per-bucket quota counters and `object_count`. Name unique per owner (`UNIQUE (COALESCE(user_id,0), name)`) |
 | `access_keys` | client credentials — `OSG…` id, AES-GCM encrypted secret, `label` (primary / backup / temp / CI / read-only), `status` (`active` \| `disabled` \| `revoked`), optional `expires_at`. A user holds many; rotate one without touching the others |
 | `access_key_permissions` | per-key actions: `read`, `write`, `delete`, `list`, `multipart`, `presigned` |
 | `access_key_prefixes` | per-key prefix confinement — the "one key, one folder" rule |

@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Data foundation, management API, admin user management and the console SPA
-exist. The **entire S3 gateway data plane does not** — no SigV4, no S3 routes,
-no backend-store client, no quota accounting, no audit log. See
+Data foundation, management API, admin user management, pool management and the
+console SPA exist. The **entire S3 gateway data plane does not** — no SigV4, no
+S3 routes, no backend-store client, no audit log. Quota accounting is in place
+(`src/models/quota.rs`) but nothing calls it from an S3 verb yet. See
 `docs/superpowers/plans/2026-08-17-go-live-roadmap.md` for what is left and in
 what order.
 
@@ -87,6 +88,9 @@ Layout:
 - **`src/models/_entities/` is generated from Postgres only.** Running `cargo loco db entities` against MySQL or SQLite yields different column types and corrupts the models.
 - **loco has no `bg_mysql`.** Switching `workers.mode` to `BackgroundQueue` forces MySQL deployments onto the Redis queue.
 - **No mail flows.** Email verification, magic link and password reset were removed; `src/mailers/` is gone. Do not add a mail-sending endpoint back without first fixing the production mailer block in `config/production.yaml`, which has no `auth:` section and so cannot be pointed at a real SMTP provider.
+- **A pool holds the upstream credential, not a bucket.** The five store columns moved from `buckets` to `pools`; `buckets.pool_id` is NOT NULL with `ON DELETE RESTRICT`. There is no `user_id IS NULL` system-pool sentinel any more — that sentinel is what turned a deleted owner's private bucket into a shared one, which `m20260817` had to fix.
+- **`pools.access_secret_encrypted` never reaches the API.** `PoolResponse` has no field for it; `is_configured` is all the console needs. `GET /api/pools` (non-admin) returns name and provider only — not even `physical_bucket`, because a tenant learning the real layout is what the gateway exists to prevent.
+- **SQLite has no `pool_id` foreign key.** `MODIFY COLUMN` and `ADD FOREIGN KEY` do not exist there, so the column stays nullable and unconstrained. `buckets::Model::create` looks the pool up itself, which is what makes the three backends behave alike; SQLite is single-node dev/test only.
 - **`AdminCaller` is the only server-side admin gate.** The console's `role` check is a UX affordance. Every new `/api/admin/*` route must take `AdminCaller`.
 - **`Caller` refuses a user holding a temporary password.** `RawCaller` skips that check and is used by exactly one endpoint, `POST /api/me/password`. Do not reach for `RawCaller` anywhere else.
 - **Some loco CLI commands are Postgres/SQLite-only:** `db dump`/`dump_schema` (`loco_rs::db::get_tables`) and `reset_autoincrement`. The latter is already handled in `App::seed`; for the former, dump from Postgres or SQLite.

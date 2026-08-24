@@ -42,9 +42,17 @@ import {
 } from "../../../lib/buckets";
 import { UNITS } from "../../../lib/dashboard";
 import { fmt, grp, quotaView } from "../../../lib/format";
+import { type PoolChoice, listPoolChoices } from "../../../lib/pools";
 
 export const Route = createFileRoute("/_app/buckets/")({
-  loader: () => listBuckets(),
+  // A bucket cannot be created without a pool, so the form needs both lists before it renders.
+  loader: async () => {
+    const [buckets, pools] = await Promise.all([
+      listBuckets(),
+      listPoolChoices(),
+    ]);
+    return { buckets, pools };
+  },
   component: Buckets,
 });
 
@@ -53,6 +61,7 @@ type NewBucket = {
   num: string;
   unit: keyof typeof UNITS;
   unlimited: boolean;
+  poolPid: string;
 };
 
 const EMPTY_FORM: NewBucket = {
@@ -60,6 +69,7 @@ const EMPTY_FORM: NewBucket = {
   num: "50",
   unit: "GiB",
   unlimited: false,
+  poolPid: "",
 };
 
 function Buckets() {
@@ -68,7 +78,15 @@ function Buckets() {
   const menu = useRowMenu();
 
   const router = useRouter();
-  const buckets: Bucket[] = Route.useLoaderData();
+  const { buckets, pools }: { buckets: Bucket[]; pools: PoolChoice[] } =
+    Route.useLoaderData();
+  const canCreate = pools.length > 0;
+
+  // One pool means there is nothing to choose; preselect it and leave the select out.
+  const newForm = (): NewBucket => ({
+    ...EMPTY_FORM,
+    poolPid: pools.length === 1 ? pools[0].pid : "",
+  });
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<NewBucket | null>(null);
   const [deleting, setDeleting] = useState<Bucket | null>(null);
@@ -88,16 +106,18 @@ function Buckets() {
       )
     : "";
   const nameValid = !!form && form.name.length > 0 && !nameError;
+  const formValid = nameValid && !!form?.poolPid;
 
   async function createBucket() {
-    if (!form || !nameValid || busy) return;
+    if (!form || !formValid || busy) return;
     setBusy(true);
     const max = form.unlimited
       ? 0
       : Math.round(Number.parseFloat(form.num || "0") * UNITS[form.unit]);
-    const created = await run(() => apiCreateBucket(form.name, max), {
-      onError: (m) => toast(m, "danger"),
-    });
+    const created = await run(
+      () => apiCreateBucket(form.name, max, form.poolPid),
+      { onError: (m) => toast(m, "danger") },
+    );
     setBusy(false);
     if (!created) return;
     setForm(null);
@@ -151,10 +171,21 @@ function Buckets() {
               {rows.length} bucket · {fmt(totalUsed)} tổng dung lượng
             </div>
           </div>
-          <PageAction
-            label="Tạo bucket"
-            onClick={() => setForm({ ...EMPTY_FORM })}
-          />
+          {canCreate ? (
+            <PageAction label="Tạo bucket" onClick={() => setForm(newForm())} />
+          ) : (
+            <div
+              style={{
+                fontSize: 12.5,
+                color: "var(--dim)",
+                textAlign: "right",
+                maxWidth: 280,
+                lineHeight: 1.5,
+              }}
+            >
+              Chưa có pool nào. Liên hệ quản trị viên trước khi tạo bucket.
+            </div>
+          )}
         </div>
 
         <TableWrap>
@@ -163,10 +194,12 @@ function Buckets() {
               title="Chưa có bucket nào"
               text="Tạo bucket đầu tiên để bắt đầu đẩy object qua gateway."
               action={
-                <PageAction
-                  label="Tạo bucket"
-                  onClick={() => setForm({ ...EMPTY_FORM })}
-                />
+                canCreate ? (
+                  <PageAction
+                    label="Tạo bucket"
+                    onClick={() => setForm(newForm())}
+                  />
+                ) : undefined
               }
             />
           ) : (
@@ -369,6 +402,44 @@ function Buckets() {
               </div>
             )}
 
+            {pools.length > 1 && (
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: "var(--dim)",
+                    marginBottom: 7,
+                  }}
+                >
+                  Pool
+                </div>
+                <select
+                  value={form.poolPid}
+                  onChange={(e) =>
+                    setForm({ ...form, poolPid: e.target.value })
+                  }
+                  style={{
+                    width: "100%",
+                    height: 38,
+                    borderRadius: 8,
+                    border: "1px solid var(--line2)",
+                    background: "var(--panel2)",
+                    color: "var(--tx)",
+                    padding: "0 10px",
+                    fontSize: 13.5,
+                  }}
+                >
+                  <option value="">Chọn pool…</option>
+                  {pools.map((p) => (
+                    <option key={p.pid} value={p.pid}>
+                      {p.name} ({p.provider})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
               <div
                 style={{
@@ -394,7 +465,7 @@ function Buckets() {
             <FormCancel onClick={() => setForm(null)} />
             <FormSubmit
               label="Tạo bucket"
-              enabled={nameValid}
+              enabled={formValid}
               onClick={createBucket}
             />
           </FormFoot>

@@ -8,15 +8,22 @@ export type Bucket = {
   reserved_bytes: number;
   object_count: number;
   public_enabled: boolean;
+  /** The pool's pid, not its row id. */
+  pool_id: string;
+  pool_name: string;
   created_at: string;
 };
 
 export const listBuckets = () => api<Bucket[]>("/api/buckets");
 
-export const createBucket = (name: string, max_bytes: number) =>
+export const createBucket = (
+  name: string,
+  max_bytes: number,
+  pool_id: string,
+) =>
   api<Bucket>("/api/buckets", {
     method: "POST",
-    body: JSON.stringify({ name, max_bytes }),
+    body: JSON.stringify({ name, max_bytes, pool_id }),
   });
 
 export const getBucket = (pid: string) => api<Bucket>(`/api/buckets/${pid}`);

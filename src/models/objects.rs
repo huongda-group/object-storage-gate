@@ -300,6 +300,47 @@ impl Model {
     }
 }
 
+/// One page of a bucket listing.
+pub struct ListQuery {
+    pub bucket_id: i32,
+    /// Empty means the whole bucket.
+    pub prefix: String,
+    /// Exclusive lower bound: the continuation token or `start-after`.
+    pub after: Option<String>,
+    pub limit: u64,
+}
+
+impl Model {
+    /// One page of keys, byte-ascending, plus one lookahead row.
+    ///
+    /// The lookahead is how `IsTruncated` is decided without a second `COUNT` — a count over a large prefix costs about as much as the page itself.
+    ///
+    /// Uses range comparison rather than `LIKE`, for the same reasons `list_by_prefix` does: sea-orm's `starts_with` does not escape `%` or `_`, `SQLite`'s `LIKE` is case-insensitive for ASCII where Postgres's is not, and a range can use the `(bucket_id, object_key)` index.
+    ///
+    /// There is no `is_latest` filter because versioning is not modelled yet; when it lands, this query and `list_by_prefix` are the two places that have to grow one.
+    ///
+    /// # Errors
+    /// Returns an error on DB failure.
+    pub async fn list_page(db: &DatabaseConnection, q: &ListQuery) -> ModelResult<Vec<Self>> {
+        let mut query = Entity::find()
+            .filter(Column::BucketId.eq(q.bucket_id))
+            .order_by_asc(Column::ObjectKey)
+            .limit(q.limit + 1);
+
+        if !q.prefix.is_empty() {
+            query = query.filter(Column::ObjectKey.gte(q.prefix.as_str()));
+            if let Some(upper) = prefix_upper_bound(&q.prefix) {
+                query = query.filter(Column::ObjectKey.lt(upper));
+            }
+        }
+        if let Some(after) = &q.after {
+            query = query.filter(Column::ObjectKey.gt(after.as_str()));
+        }
+
+        Ok(query.all(db).await?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::prefix_upper_bound;

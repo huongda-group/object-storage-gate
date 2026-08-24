@@ -181,6 +181,146 @@ pub fn delete_result(deleted: &[String], errors: &[(String, S3Error)], quiet: bo
     out
 }
 
+/// Everything a `ListBucketResult` needs, so the renderer takes one argument rather than ten.
+pub struct ListingView<'a> {
+    pub bucket: &'a str,
+    pub prefix: &'a str,
+    pub delimiter: Option<char>,
+    pub max_keys: u64,
+    pub continuation_token: Option<&'a str>,
+    pub start_after: Option<&'a str>,
+    pub url_encode: bool,
+}
+
+/// One object as `ListObjectsV2` reports it.
+pub struct ListingRow<'a> {
+    pub key: &'a str,
+    pub size: i64,
+    pub etag: &'a str,
+    pub modified: &'a str,
+}
+
+/// URL-encodes a key when the client asked for `encoding-type=url`.
+///
+/// botocore sends it when a key can contain characters that XML cannot carry safely; without it a
+/// key holding a control character produces a document the client cannot parse.
+fn maybe_encode(value: &str, url_encode: bool) -> String {
+    if url_encode {
+        percent_encoding::utf8_percent_encode(value, LISTING_ENCODE).to_string()
+    } else {
+        escape(value)
+    }
+}
+
+/// The same unreserved set `SigV4` uses, plus `/`: a listing keeps path separators readable.
+const LISTING_ENCODE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~')
+    .remove(b'/');
+
+/// Renders `ListBucketResult` in the tag order S3 uses.
+///
+/// botocore parses by name, but some older clients do not, and matching the order costs nothing.
+/// `StorageClass` is always `STANDARD`: the gateway does not model storage classes, and omitting
+/// the tag makes some clients error.
+#[must_use]
+pub fn list_objects_v2(
+    view: &ListingView<'_>,
+    rows: &[ListingRow<'_>],
+    common_prefixes: &[String],
+    is_truncated: bool,
+    next_token: Option<&str>,
+) -> String {
+    let key_count = rows.len() + common_prefixes.len();
+    let mut out = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+    );
+    let _ = write!(out, "<Name>{}</Name>", escape(view.bucket));
+    let _ = write!(
+        out,
+        "<Prefix>{}</Prefix>",
+        maybe_encode(view.prefix, view.url_encode)
+    );
+    let _ = write!(out, "<KeyCount>{key_count}</KeyCount>");
+    let _ = write!(out, "<MaxKeys>{}</MaxKeys>", view.max_keys);
+    if let Some(d) = view.delimiter {
+        let _ = write!(
+            out,
+            "<Delimiter>{}</Delimiter>",
+            maybe_encode(&d.to_string(), view.url_encode)
+        );
+    }
+    let _ = write!(out, "<IsTruncated>{is_truncated}</IsTruncated>");
+    if let Some(t) = view.continuation_token {
+        let _ = write!(out, "<ContinuationToken>{}</ContinuationToken>", escape(t));
+    }
+    if let Some(t) = next_token {
+        let _ = write!(
+            out,
+            "<NextContinuationToken>{}</NextContinuationToken>",
+            escape(t)
+        );
+    }
+    if let Some(s) = view.start_after {
+        let _ = write!(
+            out,
+            "<StartAfter>{}</StartAfter>",
+            maybe_encode(s, view.url_encode)
+        );
+    }
+    if view.url_encode {
+        out.push_str("<EncodingType>url</EncodingType>");
+    }
+    for row in rows {
+        let _ = write!(
+            out,
+            "<Contents><Key>{}</Key><LastModified>{}</LastModified><ETag>{}</ETag><Size>{}</Size><StorageClass>STANDARD</StorageClass></Contents>",
+            maybe_encode(row.key, view.url_encode),
+            escape(row.modified),
+            escape(row.etag),
+            row.size
+        );
+    }
+    for p in common_prefixes {
+        let _ = write!(
+            out,
+            "<CommonPrefixes><Prefix>{}</Prefix></CommonPrefixes>",
+            maybe_encode(p, view.url_encode)
+        );
+    }
+    out.push_str("</ListBucketResult>");
+    out
+}
+
+/// Renders `ListAllMyBucketsResult`.
+///
+/// `Owner.DisplayName` is the account name, never its email: any access key of the account can
+/// read this response, including one handed to a third party, and the email does not belong in it.
+#[must_use]
+pub fn list_buckets(owner_id: &str, owner_name: &str, buckets: &[(String, String)]) -> String {
+    let mut out = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+    );
+    let _ = write!(
+        out,
+        "<Owner><ID>{}</ID><DisplayName>{}</DisplayName></Owner><Buckets>",
+        escape(owner_id),
+        escape(owner_name)
+    );
+    for (name, created) in buckets {
+        let _ = write!(
+            out,
+            "<Bucket><Name>{}</Name><CreationDate>{}</CreationDate></Bucket>",
+            escape(name),
+            escape(created)
+        );
+    }
+    out.push_str("</Buckets></ListAllMyBucketsResult>");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

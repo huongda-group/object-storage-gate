@@ -4,6 +4,7 @@
 //! So each `(method, path-shape)` gets one handler that reads the query and dispatches. That layer is forced by the protocol, not chosen.
 //!
 //! It is also where audit belongs (G7): it is the only place that sees both an auth failure and a result.
+pub mod listing;
 pub mod object;
 
 use std::sync::OnceLock;
@@ -135,6 +136,15 @@ async fn not_implemented_after_auth(
     not_implemented(&parts.method, parts, what, rid)
 }
 
+async fn list_buckets(State(ctx): State<AppContext>, req: Request) -> Response {
+    let (parts, body) = req.into_parts();
+    if !is_s3_request(&parts) {
+        return console_fallback(parts, body).await;
+    }
+    let rid = request_id();
+    listing::list_buckets(&ctx, &parts, &rid).await
+}
+
 async fn bucket_get(State(ctx): State<AppContext>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
     if !is_s3_request(&parts) {
@@ -143,12 +153,10 @@ async fn bucket_get(State(ctx): State<AppContext>, req: Request) -> Response {
     let rid = request_id();
     let query = query_pairs(&parts);
 
-    let (action, what) = if param(&query, "list-type") == Some("2") {
-        (
-            access_keys::ACTION_LIST,
-            "ListObjectsV2 is not implemented yet",
-        )
-    } else if has_param(&query, "uploads") {
+    if param(&query, "list-type") == Some("2") {
+        return listing::list_objects_v2(&ctx, &parts, &rid).await;
+    }
+    let (action, what) = if has_param(&query, "uploads") {
         (
             access_keys::ACTION_MULTIPART,
             "ListMultipartUploads is not implemented yet",
@@ -169,14 +177,7 @@ async fn bucket_head(State(ctx): State<AppContext>, req: Request) -> Response {
         return console_fallback(parts, body).await;
     }
     let rid = request_id();
-    not_implemented_after_bucket_auth(
-        &ctx,
-        &parts,
-        access_keys::ACTION_LIST,
-        "HeadBucket is not implemented yet",
-        &rid,
-    )
-    .await
+    listing::head_bucket(&ctx, &parts, &rid).await
 }
 
 async fn bucket_post(State(ctx): State<AppContext>, req: Request) -> Response {
@@ -338,9 +339,8 @@ async fn object_delete(State(ctx): State<AppContext>, req: Request) -> Response 
 
 pub fn routes() -> Routes {
     Routes::new()
-        // `/` is deliberately not routed here.
-        // The console is served from the static fallback at `/`, and an S3 route on it shadows the whole SPA — the symptom is a blank console, which does not point at routing.
-        // ListBuckets lands in G5 and has to solve that collision by looking at whether the request carries SigV4 credentials at all.
+        // `/` is safe to route only because `is_s3_request` sends an unsigned request to the console: an S3 handler that answered every GET / would shadow the whole SPA, and the symptom is a blank console rather than anything that points at routing.
+        .add("/", get(list_buckets))
         .add(
             "/{bucket}",
             get(bucket_get)

@@ -1,6 +1,7 @@
 //! The S3 data-plane test harness.
 //!
 //! Every test here runs against a real app instance with a mock object store behind it, so a test can assert the thing that matters most: that the store was never touched.
+mod listing;
 mod read;
 mod scoping;
 mod wire;
@@ -171,6 +172,32 @@ impl TestGateway {
             .unwrap()
     }
 
+    /// Writes object rows straight into the database, the way a listing sees them.
+    ///
+    /// The listing path never calls upstream, so seeding through the model is the honest setup — going through `PutObject` would only exercise the write path again.
+    pub async fn seed_objects(&self, bucket: &str, keys: &[&str]) {
+        let b = self.bucket_row(bucket).await;
+        for k in keys {
+            object_storage_gate::models::objects::Model::put_object(
+                &self.ctx.db,
+                b.id,
+                k,
+                1,
+                "\"e\"",
+                "text/plain",
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    /// A second bucket for this same user.
+    pub async fn extra_bucket(&self, name: &str) -> buckets::Model {
+        buckets::Model::create(&self.ctx.db, self.user.id, self.pool.id, name, 0)
+            .await
+            .unwrap()
+    }
+
     pub async fn set_bucket_quota(&self, name: &str, max_bytes: i64) {
         use sea_orm::{ActiveModelTrait, ActiveValue};
         let b = self.bucket_row(name).await;
@@ -226,6 +253,7 @@ impl TestGateway {
         )
     }
 
+    /// `path` may carry a query string; it is split off and signed as query parameters, because a signed request signs the two halves differently and encoding `?` into the path makes the query vanish.
     pub async fn request(
         &self,
         signer: &TestSigner,
@@ -234,8 +262,33 @@ impl TestGateway {
         body: &[u8],
         extra: &[(&str, &str)],
     ) -> TestResponse {
-        self.request_encoded(signer, method, &encode_path(path), body, extra)
-            .await
+        let (raw_path, raw_query) = path.split_once('?').unwrap_or((path, ""));
+        let encoded = encode_path(raw_path);
+
+        let pairs: Vec<(String, String)> = if raw_query.is_empty() {
+            Vec::new()
+        } else {
+            raw_query
+                .split('&')
+                .filter(|s| !s.is_empty())
+                .map(|kv| {
+                    let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                    (k.to_string(), v.to_string())
+                })
+                .collect()
+        };
+        let query: Vec<(&str, &str)> = pairs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let headers = signer.sign(method, &encoded, &query, body, extra);
+        let target = if raw_query.is_empty() {
+            encoded
+        } else {
+            format!("{encoded}?{raw_query}")
+        };
+        self.send(method, &target, &headers, body).await
     }
 
     /// Sends a path exactly as given, without encoding it first.

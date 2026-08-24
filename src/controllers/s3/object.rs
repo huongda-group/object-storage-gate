@@ -196,7 +196,7 @@ fn content_type_of(parts: &Parts) -> String {
         .to_string()
 }
 
-pub async fn put(ctx: &AppContext, parts: &Parts, body: Vec<u8>, rid: &str) -> Response {
+pub async fn put(ctx: &AppContext, parts: &Parts, body: Body, rid: &str) -> Response {
     match put_inner(ctx, parts, body).await {
         Ok(res) => {
             let mut builder = Response::builder()
@@ -219,7 +219,7 @@ pub async fn put(ctx: &AppContext, parts: &Parts, body: Vec<u8>, rid: &str) -> R
 async fn put_inner(
     ctx: &AppContext,
     parts: &Parts,
-    body: Vec<u8>,
+    body: Body,
 ) -> Result<UpstreamResponse, S3Error> {
     // resolve() rejects an aws-chunked payload hash before anything else, so a 501 costs no reservation.
     let req = S3Request::resolve(ctx, parts, access_keys::ACTION_WRITE).await?;
@@ -229,8 +229,19 @@ async fn put_inner(
     // The hold is taken before a single byte leaves the gateway: an over-quota write must never reach the store.
     let pending = objects::Model::begin_put(&ctx.db, req.bucket.id, &req.logical_key, len).await?;
 
-    let upstream_req = UpstreamRequest::put(&req.physical_key, upstream::Body::Bytes(body))
-        .with_headers(forwarded_write_headers(parts));
+    // Streamed, not buffered: the reservation is already held, so the bytes can go straight through and a 5 GiB PUT crosses with constant memory.
+    // A streamed body signs as UNSIGNED-PAYLOAD, which S3, R2 and MinIO all accept.
+    let stream = futures_util::TryStreamExt::map_err(body.into_data_stream(), |e| {
+        std::io::Error::other(e.to_string())
+    });
+    let upstream_req = UpstreamRequest::put(
+        &req.physical_key,
+        upstream::Body::Stream {
+            body: Box::pin(stream),
+            length: u64::try_from(len).unwrap_or(0),
+        },
+    )
+    .with_headers(forwarded_write_headers(parts));
 
     match client.send(upstream_req).await {
         Ok(res) => {

@@ -47,7 +47,13 @@ pub enum Body {
     Empty,
     Bytes(Vec<u8>),
     /// The streaming case: nothing is buffered, and the payload hash is `UNSIGNED-PAYLOAD`.
-    Stream(BoxBody),
+    ///
+    /// The length is not optional. `reqwest::Body::wrap_stream` reports no size, so reqwest frames the request `Transfer-Encoding: chunked` — and S3, R2 and `MinIO` all answer 411 `MissingContentLength` to a chunked `PutObject`.
+    /// That failure is invisible against a mock upstream and only shows up against a real store.
+    Stream {
+        body: BoxBody,
+        length: u64,
+    },
 }
 
 pub struct UpstreamRequest {
@@ -126,6 +132,19 @@ impl std::fmt::Debug for UpstreamResponse {
     }
 }
 
+/// Everything one outbound signature is computed over.
+///
+/// A struct rather than seven parameters: the order of seven `&str` arguments is exactly the kind of thing that goes wrong silently, because swapping two of them still compiles and only shows up as a signature the store rejects.
+struct SigningInput<'a> {
+    method: &'a str,
+    path: &'a str,
+    query: &'a [(String, String)],
+    headers: &'a [(String, String)],
+    payload_hash: &'a str,
+    datetime: &'a str,
+    date: &'a str,
+}
+
 pub struct Client {
     endpoint: String,
     region: String,
@@ -200,7 +219,7 @@ impl Client {
             Body::Empty => (sigv4::EMPTY_PAYLOAD_SHA256.to_string(), false),
             Body::Bytes(b) => (hex::encode(Sha256::digest(b)), false),
             // A streamed body cannot be hashed before it is sent. S3, R2 and MinIO all accept UNSIGNED-PAYLOAD over HTTPS; a provider that does not would fail every write at once, which is at least easy to diagnose.
-            Body::Stream(_) => (sigv4::UNSIGNED_PAYLOAD.to_string(), true),
+            Body::Stream { .. } => (sigv4::UNSIGNED_PAYLOAD.to_string(), true),
         };
 
         let path = self.path_for(&req.key);
@@ -215,32 +234,15 @@ impl Client {
             headers.push((k.to_ascii_lowercase(), v.clone()));
         }
 
-        let mut signed_headers: Vec<String> = headers.iter().map(|(k, _)| k.clone()).collect();
-        signed_headers.sort();
-        signed_headers.dedup();
-
-        let parts = sigv4::CanonicalParts {
-            method: req.method.clone(),
-            uri: path.clone(),
-            query: req.query.clone(),
-            headers: headers.clone(),
-            signed_headers: signed_headers.clone(),
-            payload_hash,
-            // The gateway holds a decoded physical key here, so it encodes once.
-            uri_already_encoded: false,
-            // S3 never normalises, and the gateway only ever talks to S3-compatible stores.
-            normalise_path: false,
-        };
-        let scope = format!("{date}/{}/s3/aws4_request", self.region);
-        let sig = sigv4::signature(
-            &sigv4::signing_key(&self.secret, &date, &self.region, "s3"),
-            &sigv4::string_to_sign(&datetime, &scope, &sigv4::canonical_request(&parts)),
-        );
-        let authorization = format!(
-            "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={}, Signature={sig}",
-            self.access_id,
-            signed_headers.join(";")
-        );
+        let authorization = self.authorization_for(&SigningInput {
+            method: &req.method,
+            path: &path,
+            query: &req.query,
+            headers: &headers,
+            payload_hash: &payload_hash,
+            datetime: &datetime,
+            date: &date,
+        });
 
         // The URL is built from the canonical form that was just signed, so what goes on the wire cannot drift from what the signature covers.
         // Letting the HTTP client re-encode the query is exactly how a signer and a sender disagree.
@@ -272,7 +274,10 @@ impl Client {
         builder = match req.body {
             Body::Empty => builder,
             Body::Bytes(b) => builder.body(b),
-            Body::Stream(s) => builder.body(reqwest::Body::wrap_stream(s)),
+            Body::Stream { body, length } => builder
+                // Set explicitly, because the stream cannot report its own size and the store requires it.
+                .header(reqwest::header::CONTENT_LENGTH, length)
+                .body(reqwest::Body::wrap_stream(body)),
         };
 
         let res = builder.send().await.map_err(|e| {
@@ -307,6 +312,47 @@ impl Client {
                 |e| std::io::Error::other(e.to_string()),
             )),
         })
+    }
+
+    /// Builds the `Authorization` header for one outbound request.
+    ///
+    /// Split out of `send` so the signing and the sending can each be read on their own; the canonical parts it builds are the same ones the verifier builds for an inbound request.
+    fn authorization_for(&self, req: &SigningInput<'_>) -> String {
+        let SigningInput {
+            method,
+            path,
+            query,
+            headers,
+            payload_hash,
+            datetime,
+            date,
+        } = *req;
+        let mut signed_headers: Vec<String> = headers.iter().map(|(k, _)| k.clone()).collect();
+        signed_headers.sort();
+        signed_headers.dedup();
+
+        let parts = sigv4::CanonicalParts {
+            method: method.to_string(),
+            uri: path.to_string(),
+            query: query.to_vec(),
+            headers: headers.to_vec(),
+            signed_headers: signed_headers.clone(),
+            payload_hash: payload_hash.to_string(),
+            // The gateway holds a decoded physical key here, so it encodes once.
+            uri_already_encoded: false,
+            // S3 never normalises, and the gateway only ever talks to S3-compatible stores.
+            normalise_path: false,
+        };
+        let scope = format!("{date}/{}/s3/aws4_request", self.region);
+        let sig = sigv4::signature(
+            &sigv4::signing_key(&self.secret, date, &self.region, "s3"),
+            &sigv4::string_to_sign(datetime, &scope, &sigv4::canonical_request(&parts)),
+        );
+        format!(
+            "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={}, Signature={sig}",
+            self.access_id,
+            signed_headers.join(";")
+        )
     }
 
     /// Turns an upstream failure into something the client can act on, without forwarding anything that names the physical layout.

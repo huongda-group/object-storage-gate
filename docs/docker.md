@@ -170,6 +170,63 @@ lần rebuild bảng, khoá ghi trong lúc chạy — `buckets` nhỏ nên nhanh
 nên lên lịch. Và MySQL không rollback được DDL: nếu bước giữa chừng hỏng thì
 bảng nằm ở trạng thái dở dang, nên hãy dump trước.
 
+## Kiểm gateway cục bộ bằng MinIO
+
+Bộ test dùng upstream giả. Một upstream thật bắt được những thứ upstream giả
+không bao giờ bắt — ví dụ S3 và MinIO đều trả `411 MissingContentLength` cho một
+`PutObject` đóng khung `Transfer-Encoding: chunked`.
+
+```sh
+docker run -d --name osg-upstream -p 9100:9000 \
+  -e MINIO_ROOT_USER=upstream -e MINIO_ROOT_PASSWORD=upstream-secret \
+  quay.io/minio/minio server /data
+
+docker run --rm --network host \
+  -e AWS_ACCESS_KEY_ID=upstream -e AWS_SECRET_ACCESS_KEY=upstream-secret \
+  amazon/aws-cli s3 mb s3://osg-main \
+  --endpoint-url http://localhost:9100 --region us-east-1
+```
+
+Chạy gateway. `SERVER_BINDING` phải là `0.0.0.0`: mặc định `localhost` chỉ nghe
+127.0.0.1, và container trên Docker Desktop macOS không tới được.
+
+```sh
+SERVER_BINDING=0.0.0.0 DB_TYPE=sqlite LOCO_ENV=development cargo loco start
+```
+
+Qua console: tạo pool `provider=minio`, `api_endpoint=http://localhost:9100`,
+`physical_bucket=osg-main`, credential của MinIO; tạo bucket `media-cdn`; tạo
+access key có `read`, `write`, `delete`, `list`.
+
+Rồi đi một vòng ghi–đọc–xoá bằng aws-cli thật:
+
+```sh
+export AWS_ACCESS_KEY_ID=OSG… AWS_SECRET_ACCESS_KEY=…
+H=http://host.docker.internal:5150
+head -c 1048576 /dev/urandom > /tmp/1mb.bin
+
+docker run --rm --add-host=host.docker.internal:host-gateway -v /tmp:/w \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY amazon/aws-cli \
+  s3 cp /w/1mb.bin s3://media-cdn/img/1mb.bin --endpoint-url $H --region us-east-1
+```
+
+Kiểm layout vật lý — đây là chỗ bắt được lỗi nặng nhất:
+
+```sh
+docker run --rm --network host \
+  -e AWS_ACCESS_KEY_ID=upstream -e AWS_SECRET_ACCESS_KEY=upstream-secret \
+  amazon/aws-cli s3 ls --recursive s3://osg-main \
+  --endpoint-url http://localhost:9100 --region us-east-1
+```
+
+Phải ra `{user_pid}/media-cdn/img/1mb.bin`. Nếu thiếu `{user_pid}` thì hai user
+đặt cùng tên bucket sẽ ghi đè lên nhau.
+
+Kiểm quota: hạ quota bucket xuống dưới kích thước file rồi upload lại — phải
+nhận `QuotaExceeded`, và `s3 ls` trên MinIO **không** được thấy file đó.
+
+Dọn: `docker rm -f osg-upstream`.
+
 ## Sao lưu
 
 Chụp một bản dump trước mỗi lần rollout có migration. `cargo loco db dump` chỉ

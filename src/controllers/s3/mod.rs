@@ -291,18 +291,10 @@ async fn object_put(State(ctx): State<AppContext>, req: Request) -> Response {
         .await;
     }
 
-    // The body is read into memory because `begin_put` needs the size before any byte moves.
-    // ponytail: buffers the whole object, so a 5 GiB PutObject holds 5 GiB of RSS.
-    // Upgrade path: hand the axum body straight to `upstream::Body::Stream`, which the client already supports; that needs the handler to trust Content-Length for the reservation and stop taking `Vec<u8>`.
-    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
-        return fail(
-            &parts.method,
-            &S3Error::InvalidRequest("could not read the request body".to_string()),
-            parts.uri.path(),
-            &rid,
-        );
-    };
-    object::put(&ctx, &parts, bytes.to_vec(), &rid).await
+    // The body is handed over unread: the reservation comes from Content-Length, so an over-quota
+    // upload is refused after the headers rather than after the client has pushed the whole object
+    // into the gateway.
+    object::put(&ctx, &parts, body, &rid).await
 }
 
 async fn object_post(State(ctx): State<AppContext>, req: Request) -> Response {

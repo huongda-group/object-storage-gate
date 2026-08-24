@@ -115,7 +115,10 @@ async fn a_put_streams_its_body() {
     client
         .send(UpstreamRequest::put(
             "11111111/media-cdn/big.bin",
-            Body::Stream(Box::pin(stream)),
+            Body::Stream {
+                body: Box::pin(stream),
+                length: payload.len() as u64,
+            },
         ))
         .await
         .unwrap();
@@ -124,6 +127,12 @@ async fn a_put_streams_its_body() {
     assert_eq!(seen[0].body.len(), payload.len());
     // A streamed body cannot be hashed up front, so it signs as UNSIGNED-PAYLOAD.
     assert_eq!(seen[0].header("x-amz-content-sha256"), "UNSIGNED-PAYLOAD");
+    // And it must still declare its length: reqwest frames a sizeless stream as chunked, and every real S3 store answers 411 MissingContentLength to a chunked PutObject.
+    assert_eq!(
+        seen[0].header("content-length"),
+        payload.len().to_string(),
+        "a streamed upload must carry Content-Length"
+    );
 }
 
 /// A body small enough to hold is hashed, so the signature covers the bytes.

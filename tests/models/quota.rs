@@ -416,3 +416,157 @@ async fn reconcile_is_idempotent() {
     assert_eq!(second.buckets_fixed, 0);
     assert_eq!(second.users_fixed, 0);
 }
+
+/// The gateway needs the upstream upload to sit between reserve and commit.
+/// `begin_put` holds the reservation without writing metadata, so a failed upload leaves nothing behind.
+#[tokio::test]
+#[serial]
+async fn begin_put_reserves_without_writing_metadata() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+    let (_user_id, bucket_id) = setup(db, 10_000, 1000).await;
+
+    let pending = objects::Model::begin_put(db, bucket_id, "a.bin", 300)
+        .await
+        .unwrap();
+
+    let b = bucket_of(db, bucket_id).await;
+    assert_eq!(b.reserved_bytes, 300, "reservation must be held");
+    assert_eq!(b.used_bytes, 0, "nothing committed yet");
+    assert_eq!(b.object_count, 0);
+    assert!(
+        objects::Model::get(db, bucket_id, "a.bin")
+            .await
+            .unwrap()
+            .is_none(),
+        "no metadata row before the upload lands"
+    );
+
+    pending
+        .commit(db, "etag-1", "application/octet-stream")
+        .await
+        .unwrap();
+
+    let b = bucket_of(db, bucket_id).await;
+    assert_eq!(b.reserved_bytes, 0);
+    assert_eq!(b.used_bytes, 300);
+    assert_eq!(b.object_count, 1);
+}
+
+#[tokio::test]
+#[serial]
+async fn abort_releases_and_writes_nothing() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+    let (_user_id, bucket_id) = setup(db, 10_000, 1000).await;
+
+    let pending = objects::Model::begin_put(db, bucket_id, "a.bin", 300)
+        .await
+        .unwrap();
+    pending.abort(db).await.unwrap();
+
+    let b = bucket_of(db, bucket_id).await;
+    assert_eq!(b.reserved_bytes, 0);
+    assert_eq!(b.used_bytes, 0);
+    assert!(objects::Model::get(db, bucket_id, "a.bin")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(user_of(db).await.reserved_bytes, 0);
+}
+
+/// Over quota is refused at begin, before the caller has moved a byte.
+#[tokio::test]
+#[serial]
+async fn begin_put_refuses_over_quota() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+    let (_user_id, bucket_id) = setup(db, 10_000, 500).await;
+
+    let refused = objects::Model::begin_put(db, bucket_id, "big.bin", 900).await;
+
+    assert!(refused.is_err());
+    assert!(refused.unwrap_err().to_string().contains("quota exceeded"));
+    let b = bucket_of(db, bucket_id).await;
+    assert_eq!(b.reserved_bytes, 0, "a refused begin must not leak a hold");
+}
+
+/// An overwrite charges the difference, and a shrink needs no reservation at all.
+#[tokio::test]
+#[serial]
+async fn begin_put_charges_only_the_delta() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+    let (_user_id, bucket_id) = setup(db, 10_000, 1000).await;
+
+    objects::Model::put_object(db, bucket_id, "a.bin", 300, "e1", "text/plain")
+        .await
+        .unwrap();
+
+    // Grow: reserve 200, not 500.
+    let pending = objects::Model::begin_put(db, bucket_id, "a.bin", 500)
+        .await
+        .unwrap();
+    assert_eq!(bucket_of(db, bucket_id).await.reserved_bytes, 200);
+    pending.commit(db, "e2", "text/plain").await.unwrap();
+    assert_eq!(bucket_of(db, bucket_id).await.used_bytes, 500);
+
+    // Shrink: no reservation, settled at commit.
+    let pending = objects::Model::begin_put(db, bucket_id, "a.bin", 100)
+        .await
+        .unwrap();
+    assert_eq!(bucket_of(db, bucket_id).await.reserved_bytes, 0);
+    pending.commit(db, "e3", "text/plain").await.unwrap();
+    assert_eq!(bucket_of(db, bucket_id).await.used_bytes, 100);
+    assert_eq!(bucket_of(db, bucket_id).await.object_count, 1);
+}
+
+/// `put_object` is now `begin_put` + `commit`; the behaviour P5 shipped must not change.
+#[tokio::test]
+#[serial]
+async fn put_object_still_charges_exactly_once() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+    let (_user_id, bucket_id) = setup(db, 10_000, 1000).await;
+
+    objects::Model::put_object(db, bucket_id, "a.bin", 300, "e1", "text/plain")
+        .await
+        .unwrap();
+
+    let b = bucket_of(db, bucket_id).await;
+    assert_eq!(b.used_bytes, 300, "double-charged");
+    assert_eq!(b.reserved_bytes, 0);
+    assert_eq!(b.object_count, 1);
+}
+
+/// `record_put` is the multipart escape hatch: metadata only, quota untouched.
+///
+/// This test exists to say the gap is deliberate. Nothing but `CompleteMultipartUpload` may call it, because every other caller would store bytes nobody is charged for.
+#[tokio::test]
+#[serial]
+async fn record_put_writes_metadata_and_leaves_quota_alone() {
+    let boot = boot_test::<App>().await.unwrap();
+    let db = &boot.app_context.db;
+    seed::<App>(&boot.app_context).await.unwrap();
+    let (_user_id, bucket_id) = setup(db, 10_000, 1000).await;
+
+    objects::Model::record_put(db, bucket_id, "a.bin", 300, "e1", "text/plain")
+        .await
+        .unwrap();
+
+    assert!(objects::Model::get(db, bucket_id, "a.bin")
+        .await
+        .unwrap()
+        .is_some());
+    let b = bucket_of(db, bucket_id).await;
+    assert_eq!(
+        b.used_bytes, 0,
+        "record_put must not touch quota; multipart owns it"
+    );
+    assert_eq!(b.object_count, 0);
+}

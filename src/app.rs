@@ -106,6 +106,8 @@ impl Hooks for App {
             .add_route(controllers::admin_pools::routes())
             .add_route(controllers::admin_pools::user_routes())
             .add_route(controllers::buckets::routes())
+            // Last on purpose: /{bucket}/{*key} matches nearly everything, so the S3 tree must sit behind /api/*, the static console and the health endpoints.
+            .add_route(controllers::s3::routes())
     }
     async fn connect_workers(ctx: &AppContext, queue: &Queue) -> Result<()> {
         queue.register(DownloadWorker::build(ctx)).await?;

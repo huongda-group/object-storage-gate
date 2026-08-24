@@ -173,6 +173,19 @@ impl Model {
         user.ok_or_else(|| ModelError::EntityNotFound)
     }
 
+    /// A user by row id, for paths that already hold a foreign key rather than a public id.
+    ///
+    /// `find_by_pid` takes a UUID; an `i32` stringified into it parses as nothing and reads as "no such user".
+    ///
+    /// # Errors
+    /// Returns an error when no user has that id, or on DB failure.
+    pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> ModelResult<Self> {
+        Entity::find_by_id(id)
+            .one(db)
+            .await?
+            .ok_or(ModelError::EntityNotFound)
+    }
+
     /// finds a user by the provided pid
     ///
     /// # Errors

@@ -32,7 +32,10 @@ pub const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 
 pub struct CanonicalParts {
     pub method: String,
-    /// The decoded path. `canonical_request` percent-encodes it exactly once, which is what both S3 and every other service expect.
+    /// The request path.
+    ///
+    /// When `uri_already_encoded` is false this is the decoded path and `canonical_request` percent-encodes it exactly once.
+    /// When true it is the path exactly as it arrived on the wire and is used verbatim.
     pub uri: String,
     /// `(name, value)` pairs, decoded and unsorted.
     pub query: Vec<(String, String)>,
@@ -41,6 +44,11 @@ pub struct CanonicalParts {
     /// Lowercase names, sorted, as they appear in `SignedHeaders`.
     pub signed_headers: Vec<String>,
     pub payload_hash: String,
+    /// Whether `uri` is already in its canonical, percent-encoded form.
+    ///
+    /// Verification sets this: the client computed its signature over the exact string it put in the request line, so decoding and re-encoding it can only introduce a mismatch — a client that wrote `%7E` where this code would write `~` would fail to verify for no reason.
+    /// Signing an outbound request sets it false, because there the gateway holds a decoded key and must encode it once.
+    pub uri_already_encoded: bool,
     /// S3 does not normalise the path; every other service does.
     ///
     /// The AWS vector suite uses a non-S3 service, so it exercises the normalising branch — which is why this is a flag and not a constant.
@@ -81,6 +89,18 @@ fn canonical_header_value(v: &str) -> String {
 
 #[must_use]
 pub fn canonical_uri(path: &str, normalise_path: bool) -> String {
+    canonical_uri_with(path, normalise_path, false)
+}
+
+#[must_use]
+pub fn canonical_uri_with(path: &str, normalise_path: bool, already_encoded: bool) -> String {
+    if already_encoded {
+        return if path.is_empty() {
+            "/".to_string()
+        } else {
+            path.to_string()
+        };
+    }
     let p = if normalise_path {
         normalise(path)
     } else if path.is_empty() {
@@ -144,7 +164,7 @@ pub fn canonical_request(p: &CanonicalParts) -> String {
     format!(
         "{}\n{}\n{}\n{}\n{}\n{}",
         p.method,
-        canonical_uri(&p.uri, p.normalise_path),
+        canonical_uri_with(&p.uri, p.normalise_path, p.uri_already_encoded),
         canonical_query(&p.query),
         headers,
         signed.join(";"),
@@ -468,6 +488,7 @@ mod tests {
             headers,
             signed_headers,
             payload_hash: hex::encode(Sha256::digest(body.as_bytes())),
+            uri_already_encoded: false,
             // The suite's service is `service`, not s3, so it exercises the normalising branch.
             normalise_path: true,
         }
@@ -630,6 +651,7 @@ mod tests {
             ],
             signed_headers: vec!["host".to_string(), "x-amz-date".to_string()],
             payload_hash: EMPTY_PAYLOAD_SHA256.to_string(),
+            uri_already_encoded: false,
             normalise_path: false,
         };
         let date = &when[..8];

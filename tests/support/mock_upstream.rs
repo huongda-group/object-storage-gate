@@ -163,11 +163,16 @@ impl MockUpstream {
     }
 
     /// Asserts the physical key the gateway addressed, which is the rewrite under test.
+    ///
+    /// Compares decoded paths: what is under test is which object was addressed, not how it was spelled on the wire. The encoding itself is covered by the `SigV4` vectors.
     pub fn assert_key(&self, n: usize, expected: &str) {
         let seen = self.requests();
         let got = seen
             .get(n)
             .unwrap_or_else(|| panic!("no request at index {n}; upstream saw {}", seen.len()));
-        assert_eq!(got.path.trim_start_matches('/'), expected);
+        let decoded = percent_encoding::percent_decode_str(got.path.trim_start_matches('/'))
+            .decode_utf8_lossy()
+            .to_string();
+        assert_eq!(decoded, expected);
     }
 }

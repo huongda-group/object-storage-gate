@@ -3,3 +3,4 @@ pub mod admin_pools;
 pub mod api;
 pub mod auth;
 pub mod buckets;
+pub mod s3;

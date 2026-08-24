@@ -226,6 +226,8 @@ impl Client {
             headers: headers.clone(),
             signed_headers: signed_headers.clone(),
             payload_hash,
+            // The gateway holds a decoded physical key here, so it encodes once.
+            uri_already_encoded: false,
             // S3 never normalises, and the gateway only ever talks to S3-compatible stores.
             normalise_path: false,
         };

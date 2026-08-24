@@ -225,6 +225,25 @@ Phải ra `{user_pid}/media-cdn/img/1mb.bin`. Nếu thiếu `{user_pid}` thì ha
 Kiểm quota: hạ quota bucket xuống dưới kích thước file rồi upload lại — phải
 nhận `QuotaExceeded`, và `s3 ls` trên MinIO **không** được thấy file đó.
 
+Multipart, copy và presigned cũng kiểm ở đây — aws-cli tự chuyển sang multipart
+với file trên 8 MB:
+
+```sh
+head -c 104857600 /dev/urandom > /tmp/100mb.bin
+# upload (multipart), đọc lại, so byte
+# copy phía server
+aws s3 cp s3://media-cdn/src/a.txt s3://media-cdn/dst/b.txt --endpoint-url $H
+# presigned: mở bằng curl, không credential
+URL=$(aws s3 presign s3://media-cdn/src/a.txt --expires-in 300 --endpoint-url $H)
+curl -s "$URL"
+```
+
+Sau khi multipart xong, `multipart_uploads` phải rỗng và bucket phải hiện
+`reserved_bytes = 0` — còn dòng nào là một hold không ai trả lại.
+
+Lưu ý khi kiểm presigned bằng curl: chữ ký phủ header `Host`, nên đừng đổi host
+trong URL. Đổi thì ra `SignatureDoesNotMatch`, và lỗi đó trông y hệt lỗi signer.
+
 Dọn: `docker rm -f osg-upstream`.
 
 ## Sao lưu

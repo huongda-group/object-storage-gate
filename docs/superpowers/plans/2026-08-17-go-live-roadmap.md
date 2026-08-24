@@ -19,7 +19,7 @@
 | 3 | Sửa tầng dữ liệu | `2026-08-17-p3-data-layer-correctness.md` | 7 High | **XONG** |
 | 4 | Console bỏ mock, nối API thật | `2026-08-17-p4-console-real-api.md` | Blocker 7, 8 | **XONG** |
 | 5 | Máy quota | `2026-08-17-p5-quota-engine.md` | Blocker 6 | **XONG** |
-| G1 | Pools + ràng buộc bucket → pool | `2026-08-17-g1-pools-and-bucket-binding.md` | tiền đề cho cả gateway | 1 |
+| G1 | Pools + ràng buộc bucket → pool | `2026-08-17-g1-pools-and-bucket-binding.md` | tiền đề cho cả gateway | 1 — **XONG** |
 | G2 | SigV4 + client upstream | `2026-08-17-g2-sigv4-and-upstream-client.md` | slice #2 | G1 |
 | G3 | Biên giới cách ly + đường đọc | `2026-08-17-g3-isolation-boundary-and-read-path.md` | slice #2, #3 | G2 |
 | G4 | Đường ghi + quota | `2026-08-17-g4-write-path-and-quota.md` | slice #3, #4 | G3, 5 |
@@ -144,3 +144,14 @@ Những cái này chỉ lộ ra khi chạy thật, không lộ khi đọc code:
    không `Send`; allow ở crate root của test.
 10. **Route đã gỡ không trả 404** — static SPA fallback trả 405 cho POST và
     200 + `index.html` cho GET. Test phải assert vào body, không vào status.
+11. **`cargo loco db entities` tự sửa `src/models/mod.rs`** và tự sinh file model
+    rỗng. Thêm `pub mod x;` bằng tay sau lệnh đó là khai báo trùng.
+12. **Clippy sạch với cache ấm không có nghĩa là sạch.** Crate nào không biên dịch
+    lại thì lint của nó không in ra. Đổi `migration/src/lib.rs` làm lộ 12 lint có
+    sẵn từ P3/P5, kể cả một phép ép `usize as i64` trong đường quota.
+13. **Backfill viết bằng nội suy chuỗi hỏng trên MySQL.** `pools.pid` là `uuid`
+    trên Postgres nhưng `binary(16)` trên MySQL — chỉ query builder mã hoá đúng cả
+    hai. `db reset` không bao giờ có sẵn dòng để migrate, nên chỉ dựng tay một
+    schema có dữ liệu mới thấy.
+14. **MySQL không rollback được DDL.** Migration hỏng giữa chừng để lại bảng dở
+    dang (`pool_id` đã thêm), lần chạy sau báo `Duplicate column name`.

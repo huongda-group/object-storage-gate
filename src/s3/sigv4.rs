@@ -2,9 +2,13 @@
 //!
 //! `canonical_request` is shared: verification rebuilds the string the client signed, signing builds the string the gateway is about to sign.
 //! One implementation means a bug shows up on both sides at once instead of hiding on one.
+use axum::http::HeaderMap;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use hmac::{Hmac, KeyInit, Mac};
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use sha2::{Digest, Sha256};
+
+use super::error::S3Error;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -173,6 +177,215 @@ fn hmac(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().into()
+}
+
+/// AWS's default tolerance, and what every S3 client assumes.
+pub const CLOCK_SKEW_SECS: i64 = 900;
+
+/// What the client presented, in either the header or the query form.
+pub struct PresentedSignature {
+    pub access_key_id: String,
+    pub date: String,
+    pub region: String,
+    pub service: String,
+    pub signed_headers: Vec<String>,
+    pub signature: String,
+    pub datetime: String,
+    /// Only the presigned form carries this, in seconds from `datetime`.
+    pub expires: Option<u64>,
+}
+
+/// Parses `20150830T123600Z`.
+#[must_use]
+pub fn parse_amz_datetime(s: &str) -> Option<DateTime<Utc>> {
+    NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%SZ")
+        .ok()
+        .map(|naive| naive.and_utc())
+}
+
+/// Splits `AKID/20150830/us-east-1/s3/aws4_request` into its four meaningful parts.
+fn split_credential(cred: &str) -> Option<(String, String, String, String)> {
+    let mut it = cred.split('/');
+    let key = it.next()?.to_string();
+    let date = it.next()?.to_string();
+    let region = it.next()?.to_string();
+    let service = it.next()?.to_string();
+    if it.next()? != "aws4_request" || it.next().is_some() {
+        return None;
+    }
+    Some((key, date, region, service))
+}
+
+/// Parses `Authorization: AWS4-HMAC-SHA256 Credential=…, SignedHeaders=…, Signature=…`.
+///
+/// # Errors
+/// `AccessDenied` when the header is absent or not `SigV4` at all — a request that never tried to authenticate is not a signature failure, and telling the two apart is what lets a client know whether to retry with credentials.
+pub fn parse_authorization(headers: &HeaderMap) -> Result<PresentedSignature, S3Error> {
+    let raw = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(S3Error::AccessDenied)?;
+    let rest = raw
+        .strip_prefix("AWS4-HMAC-SHA256 ")
+        .ok_or(S3Error::AccessDenied)?;
+
+    let mut credential = None;
+    let mut signed_headers = None;
+    let mut signature = None;
+    for field in rest.split(',') {
+        let field = field.trim();
+        if let Some(v) = field.strip_prefix("Credential=") {
+            credential = Some(v.to_string());
+        } else if let Some(v) = field.strip_prefix("SignedHeaders=") {
+            signed_headers = Some(v.to_string());
+        } else if let Some(v) = field.strip_prefix("Signature=") {
+            signature = Some(v.to_string());
+        }
+    }
+
+    let (access_key_id, date, region, service) =
+        split_credential(&credential.ok_or(S3Error::AccessDenied)?).ok_or(S3Error::AccessDenied)?;
+
+    // x-amz-date is the signed timestamp; Date is the fallback S3 still accepts.
+    let datetime = headers
+        .get("x-amz-date")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(S3Error::AccessDenied)?
+        .to_string();
+
+    Ok(PresentedSignature {
+        access_key_id,
+        date,
+        region,
+        service,
+        signed_headers: signed_headers
+            .ok_or(S3Error::AccessDenied)?
+            .split(';')
+            .map(str::to_string)
+            .collect(),
+        signature: signature.ok_or(S3Error::AccessDenied)?,
+        datetime,
+        expires: None,
+    })
+}
+
+/// Parses the presigned form, where every field is an `X-Amz-*` query parameter.
+///
+/// # Errors
+/// `AccessDenied` when the required params are absent or malformed.
+pub fn parse_query(query: &[(String, String)]) -> Result<PresentedSignature, S3Error> {
+    let get = |name: &str| -> Option<&str> {
+        query
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    };
+
+    if get("X-Amz-Algorithm") != Some("AWS4-HMAC-SHA256") {
+        return Err(S3Error::AccessDenied);
+    }
+
+    let (access_key_id, date, region, service) =
+        split_credential(get("X-Amz-Credential").ok_or(S3Error::AccessDenied)?)
+            .ok_or(S3Error::AccessDenied)?;
+
+    Ok(PresentedSignature {
+        access_key_id,
+        date,
+        region,
+        service,
+        signed_headers: get("X-Amz-SignedHeaders")
+            .ok_or(S3Error::AccessDenied)?
+            .split(';')
+            .map(str::to_string)
+            .collect(),
+        signature: get("X-Amz-Signature")
+            .ok_or(S3Error::AccessDenied)?
+            .to_string(),
+        datetime: get("X-Amz-Date").ok_or(S3Error::AccessDenied)?.to_string(),
+        expires: Some(
+            get("X-Amz-Expires")
+                .ok_or(S3Error::AccessDenied)?
+                .parse()
+                .map_err(|_| S3Error::AccessDenied)?,
+        ),
+    })
+}
+
+/// The canonical query string for a presigned request, which excludes `X-Amz-Signature`.
+///
+/// Including it makes every presigned URL fail, and the failure looks exactly like a wrong secret.
+#[must_use]
+pub fn canonical_query_for_presigned(query: &[(String, String)]) -> String {
+    let kept: Vec<(String, String)> = query
+        .iter()
+        .filter(|(k, _)| !k.eq_ignore_ascii_case("X-Amz-Signature"))
+        .cloned()
+        .collect();
+    canonical_query(&kept)
+}
+
+/// Whether a presigned signature is still inside the window its issuer chose.
+///
+/// # Errors
+/// `AccessDenied` once `datetime + expires` has passed. Not `RequestTimeTooSkewed`: an expired link is not a clock problem, and a client that retries after fixing its clock will fail again.
+pub fn check_expiry(presented: &PresentedSignature, now: DateTime<Utc>) -> Result<(), S3Error> {
+    let Some(expires) = presented.expires else {
+        return Ok(());
+    };
+    let signed_at = parse_amz_datetime(&presented.datetime).ok_or(S3Error::AccessDenied)?;
+    let age = (now - signed_at).num_seconds();
+    if age < 0 || age > i64::try_from(expires).unwrap_or(i64::MAX) {
+        return Err(S3Error::AccessDenied);
+    }
+    Ok(())
+}
+
+/// Recomputes the signature and compares it in constant time.
+///
+/// The clock check runs before the HMAC: rejecting a stale request costs one comparison, and verifying it first would spend a full HMAC on requests that are refused anyway.
+///
+/// # Errors
+/// `RequestTimeTooSkewed` beyond ±15 minutes; `SignatureDoesNotMatch` otherwise.
+pub fn verify(
+    presented: &PresentedSignature,
+    secret: &str,
+    parts: &CanonicalParts,
+    now: DateTime<Utc>,
+) -> Result<(), S3Error> {
+    let signed_at = parse_amz_datetime(&presented.datetime).ok_or(S3Error::RequestTimeTooSkewed)?;
+    if (now - signed_at).num_seconds().abs() > CLOCK_SKEW_SECS {
+        return Err(S3Error::RequestTimeTooSkewed);
+    }
+
+    let scope = format!(
+        "{}/{}/{}/aws4_request",
+        presented.date, presented.region, presented.service
+    );
+    let expected = signature(
+        &signing_key(
+            secret,
+            &presented.date,
+            &presented.region,
+            &presented.service,
+        ),
+        &string_to_sign(&presented.datetime, &scope, &canonical_request(parts)),
+    );
+
+    // Constant-time: a byte-by-byte early return leaks the signature one byte at a time, and the signature is the one field the caller fully controls.
+    if constant_time_eq(expected.as_bytes(), presented.signature.as_bytes()) {
+        Ok(())
+    } else {
+        Err(S3Error::SignatureDoesNotMatch)
+    }
+}
+
+/// Length mismatch returns early on purpose: a hex signature is always 64 characters, so the length carries no secret.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 #[cfg(test)]
@@ -401,5 +614,262 @@ mod tests {
         let q = vec![("prefix".to_string(), "a/b".to_string())];
         assert_eq!(canonical_query(&q), "prefix=a%2Fb");
         assert_eq!(canonical_uri("/a/b", false), "/a/b");
+    }
+
+    // ---- verify ----
+
+    /// Builds a real signed GET so the verify tests exercise the same code path a client would.
+    fn a_signed_get(secret: &str, when: &str) -> (PresentedSignature, CanonicalParts) {
+        let parts = CanonicalParts {
+            method: "GET".to_string(),
+            uri: "/osg-main/1111/media-cdn/a.jpg".to_string(),
+            query: Vec::new(),
+            headers: vec![
+                ("host".to_string(), "s3.example.com".to_string()),
+                ("x-amz-date".to_string(), when.to_string()),
+            ],
+            signed_headers: vec!["host".to_string(), "x-amz-date".to_string()],
+            payload_hash: EMPTY_PAYLOAD_SHA256.to_string(),
+            normalise_path: false,
+        };
+        let date = &when[..8];
+        let scope = format!("{date}/{VECTOR_REGION}/s3/aws4_request");
+        let sig = signature(
+            &signing_key(secret, date, VECTOR_REGION, "s3"),
+            &string_to_sign(when, &scope, &canonical_request(&parts)),
+        );
+        let presented = PresentedSignature {
+            access_key_id: "OSGTESTKEYID".to_string(),
+            date: date.to_string(),
+            region: VECTOR_REGION.to_string(),
+            service: "s3".to_string(),
+            signed_headers: vec!["host".to_string(), "x-amz-date".to_string()],
+            signature: sig,
+            datetime: when.to_string(),
+            expires: None,
+        };
+        (presented, parts)
+    }
+
+    fn presigned_at(when: &str, expires: u64) -> PresentedSignature {
+        PresentedSignature {
+            access_key_id: "OSGTESTKEYID".to_string(),
+            date: when[..8].to_string(),
+            region: VECTOR_REGION.to_string(),
+            service: "s3".to_string(),
+            signed_headers: vec!["host".to_string()],
+            signature: "0".repeat(64),
+            datetime: when.to_string(),
+            expires: Some(expires),
+        }
+    }
+
+    #[test]
+    fn a_correctly_signed_request_verifies() {
+        let (sig, parts) = a_signed_get(VECTOR_SECRET, "20150830T123600Z");
+        let now = parse_amz_datetime("20150830T123600Z").unwrap();
+        assert!(verify(&sig, VECTOR_SECRET, &parts, now).is_ok());
+    }
+
+    #[test]
+    fn a_wrong_secret_does_not_verify() {
+        let (sig, parts) = a_signed_get(VECTOR_SECRET, "20150830T123600Z");
+        let now = parse_amz_datetime("20150830T123600Z").unwrap();
+        assert!(matches!(
+            verify(&sig, "not-the-secret", &parts, now),
+            Err(S3Error::SignatureDoesNotMatch)
+        ));
+    }
+
+    /// A tampered request must fail even though the signature itself is untouched — that is the whole point of signing the canonical request rather than just the timestamp.
+    #[test]
+    fn a_tampered_key_does_not_verify() {
+        let (sig, mut parts) = a_signed_get(VECTOR_SECRET, "20150830T123600Z");
+        parts.uri = "/osg-main/2222/media-cdn/a.jpg".to_string();
+        let now = parse_amz_datetime("20150830T123600Z").unwrap();
+        assert!(matches!(
+            verify(&sig, VECTOR_SECRET, &parts, now),
+            Err(S3Error::SignatureDoesNotMatch)
+        ));
+    }
+
+    /// Spec §5.1 step 4.
+    #[test]
+    fn a_signature_inside_the_window_verifies() {
+        let (sig, parts) = a_signed_get(VECTOR_SECRET, "20150830T123600Z");
+        let now = parse_amz_datetime("20150830T124000Z").unwrap();
+        assert!(verify(&sig, VECTOR_SECRET, &parts, now).is_ok());
+    }
+
+    #[test]
+    fn a_signature_outside_the_window_is_refused() {
+        let (sig, parts) = a_signed_get(VECTOR_SECRET, "20150830T123600Z");
+        let now = parse_amz_datetime("20150830T140000Z").unwrap();
+        assert!(matches!(
+            verify(&sig, VECTOR_SECRET, &parts, now),
+            Err(S3Error::RequestTimeTooSkewed)
+        ));
+    }
+
+    /// Skew is symmetric: a client whose clock runs fast is as suspect as one running slow.
+    #[test]
+    fn a_signature_from_the_future_is_refused() {
+        let (sig, parts) = a_signed_get(VECTOR_SECRET, "20150830T140000Z");
+        let now = parse_amz_datetime("20150830T123600Z").unwrap();
+        assert!(matches!(
+            verify(&sig, VECTOR_SECRET, &parts, now),
+            Err(S3Error::RequestTimeTooSkewed)
+        ));
+    }
+
+    /// The boundary itself, in both directions: 900s is inside, 901s is not.
+    #[test]
+    fn the_skew_boundary_is_exactly_fifteen_minutes() {
+        let (sig, parts) = a_signed_get(VECTOR_SECRET, "20150830T120000Z");
+        let inside = parse_amz_datetime("20150830T121500Z").unwrap();
+        let outside = parse_amz_datetime("20150830T121501Z").unwrap();
+        assert!(verify(&sig, VECTOR_SECRET, &parts, inside).is_ok());
+        assert!(verify(&sig, VECTOR_SECRET, &parts, outside).is_err());
+    }
+
+    #[test]
+    fn a_missing_authorization_header_is_access_denied() {
+        let headers = HeaderMap::new();
+        assert!(matches!(
+            parse_authorization(&headers),
+            Err(S3Error::AccessDenied)
+        ));
+    }
+
+    #[test]
+    fn a_malformed_authorization_header_is_access_denied() {
+        for bad in [
+            "Bearer abc",
+            "AWS4-HMAC-SHA256 nonsense",
+            "AWS4-HMAC-SHA256 Credential=x, SignedHeaders=host",
+            "AWS4-HMAC-SHA256 Credential=x/y/z, SignedHeaders=host, Signature=s",
+            "AWS4-HMAC-SHA256 Credential=a/b/c/d/not_aws4_request, SignedHeaders=host, Signature=s",
+            "AWS4-HMAC-SHA256 Credential=a/b/c/d/aws4_request/extra, SignedHeaders=host, Signature=s",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("authorization", bad.parse().unwrap());
+            headers.insert("x-amz-date", "20150830T123600Z".parse().unwrap());
+            assert!(
+                parse_authorization(&headers).is_err(),
+                "should reject {bad:?}"
+            );
+        }
+    }
+
+    /// A well-formed Authorization header with no x-amz-date has nothing to check skew against.
+    #[test]
+    fn an_authorization_header_without_a_date_is_access_denied() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            "AWS4-HMAC-SHA256 Credential=AKID/20150830/us-east-1/s3/aws4_request, \
+             SignedHeaders=host, Signature=abc"
+                .parse()
+                .unwrap(),
+        );
+        assert!(matches!(
+            parse_authorization(&headers),
+            Err(S3Error::AccessDenied)
+        ));
+    }
+
+    #[test]
+    fn a_well_formed_authorization_header_parses() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/s3/aws4_request, \
+             SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=deadbeef"
+                .parse()
+                .unwrap(),
+        );
+        headers.insert("x-amz-date", "20150830T123600Z".parse().unwrap());
+
+        let sig = parse_authorization(&headers).unwrap();
+        assert_eq!(sig.access_key_id, "AKIDEXAMPLE");
+        assert_eq!(sig.date, "20150830");
+        assert_eq!(sig.region, "us-east-1");
+        assert_eq!(sig.service, "s3");
+        assert_eq!(sig.signature, "deadbeef");
+        assert_eq!(sig.signed_headers.len(), 3);
+        assert_eq!(sig.expires, None);
+    }
+
+    /// Presigned form. Spec §5.3.
+    #[test]
+    fn a_presigned_query_parses_and_carries_its_expiry() {
+        let q = vec![
+            ("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()),
+            (
+                "X-Amz-Credential".into(),
+                "AKIDEXAMPLE/20150830/us-east-1/s3/aws4_request".into(),
+            ),
+            ("X-Amz-Date".into(), "20150830T123600Z".into()),
+            ("X-Amz-Expires".into(), "3600".into()),
+            ("X-Amz-SignedHeaders".into(), "host".into()),
+            ("X-Amz-Signature".into(), "abc".into()),
+        ];
+        let sig = parse_query(&q).unwrap();
+        assert_eq!(sig.access_key_id, "AKIDEXAMPLE");
+        assert_eq!(sig.expires, Some(3600));
+    }
+
+    #[test]
+    fn a_query_without_the_algorithm_is_access_denied() {
+        let q = vec![("X-Amz-Signature".into(), "abc".into())];
+        assert!(matches!(parse_query(&q), Err(S3Error::AccessDenied)));
+    }
+
+    #[test]
+    fn a_presigned_signature_inside_its_window_is_accepted() {
+        let sig = presigned_at("20150830T123600Z", 3600);
+        let now = parse_amz_datetime("20150830T124000Z").unwrap();
+        assert!(check_expiry(&sig, now).is_ok());
+    }
+
+    #[test]
+    fn an_expired_presigned_signature_is_access_denied() {
+        let sig = presigned_at("20150830T123600Z", 60);
+        let now = parse_amz_datetime("20150830T124000Z").unwrap();
+        assert!(matches!(
+            check_expiry(&sig, now),
+            Err(S3Error::AccessDenied)
+        ));
+    }
+
+    /// A link whose start time has not arrived yet is refused too; otherwise a client with a fast clock could mint one good for twice its stated life.
+    #[test]
+    fn a_presigned_signature_from_the_future_is_access_denied() {
+        let sig = presigned_at("20150830T140000Z", 60);
+        let now = parse_amz_datetime("20150830T123600Z").unwrap();
+        assert!(matches!(
+            check_expiry(&sig, now),
+            Err(S3Error::AccessDenied)
+        ));
+    }
+
+    /// The canonical query string for a presigned request excludes X-Amz-Signature — including it makes every presigned URL fail, and the failure looks like a wrong secret.
+    #[test]
+    fn the_signature_param_is_excluded_from_the_canonical_query() {
+        let q = vec![
+            ("X-Amz-Signature".into(), "abc".into()),
+            ("X-Amz-Date".into(), "20150830T123600Z".into()),
+        ];
+        let canonical = canonical_query_for_presigned(&q);
+        assert!(!canonical.contains("X-Amz-Signature"));
+        assert!(canonical.contains("X-Amz-Date"));
+    }
+
+    #[test]
+    fn constant_time_eq_still_compares_correctly() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(constant_time_eq(b"", b""));
     }
 }

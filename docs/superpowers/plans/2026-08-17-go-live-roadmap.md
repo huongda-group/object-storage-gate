@@ -20,10 +20,10 @@
 | 4 | Console bỏ mock, nối API thật | `2026-08-17-p4-console-real-api.md` | Blocker 7, 8 | **XONG** |
 | 5 | Máy quota | `2026-08-17-p5-quota-engine.md` | Blocker 6 | **XONG** |
 | G1 | Pools + ràng buộc bucket → pool | `2026-08-17-g1-pools-and-bucket-binding.md` | tiền đề cho cả gateway | 1 — **XONG** |
-| G2 | SigV4 + client upstream | `2026-08-17-g2-sigv4-and-upstream-client.md` | slice #2 | G1 |
-| G3 | Biên giới cách ly + đường đọc | `2026-08-17-g3-isolation-boundary-and-read-path.md` | slice #2, #3 | G2 |
-| G4 | Đường ghi + quota | `2026-08-17-g4-write-path-and-quota.md` | slice #3, #4 | G3, 5 |
-| G5 | Listing đọc từ DB | `2026-08-17-g5-listing-from-db.md` | slice #3 | G3 |
+| G2 | SigV4 + client upstream | `2026-08-17-g2-sigv4-and-upstream-client.md` | slice #2 | G1 — **XONG** |
+| G3 | Biên giới cách ly + đường đọc | `2026-08-17-g3-isolation-boundary-and-read-path.md` | slice #2, #3 | G2 — **XONG** |
+| G4 | Đường ghi + quota | `2026-08-17-g4-write-path-and-quota.md` | slice #3, #4 | G3, 5 — **XONG** |
+| G5 | Listing đọc từ DB | `2026-08-17-g5-listing-from-db.md` | slice #3 | G3 — **XONG** |
 | G6 | Multipart, copy, presigned | `2026-08-17-g6-multipart-copy-presigned.md` | slice #5 | G4 |
 | G7 | Audit, jobs, conformance | `2026-08-17-g7-audit-jobs-and-conformance.md` | slice #6 | G6 |
 
@@ -155,3 +155,19 @@ Những cái này chỉ lộ ra khi chạy thật, không lộ khi đọc code:
     schema có dữ liệu mới thấy.
 14. **MySQL không rollback được DDL.** Migration hỏng giữa chừng để lại bảng dở
     dang (`pool_id` đã thêm), lần chạy sau báo `Duplicate column name`.
+15. **`/{bucket}/{*key}` nuốt cả console.** loco gắn static làm *fallback của
+    router*, mà fallback không chạy khi đã có route khớp — nên cây S3 nuốt
+    `/static/*`, mọi deep link SPA và mọi `/api/...` chưa có route. Phải phân
+    biệt bằng "có credential SigV4 không"; hệ quả là request S3 quên ký sẽ tới
+    console chứ không nhận `AccessDenied`.
+16. **`..` không gửi được qua HTTP.** Cả dạng thường lẫn `%2E%2E` đều bị gộp
+    trong lúc truyền, nên test HTTP không canh được `validate_logical_key`.
+17. **Stream không khai `Content-Length` thì S3 từ chối.** `reqwest` đóng khung
+    chunked, và S3/R2/MinIO đều trả `411 MissingContentLength`. Upstream giả
+    không kiểm nên test vẫn xanh.
+18. **`axum-test` phá chữ ký của request có body.** `bytes()` tự đặt
+    `content-type`, `add_header` nối thêm chứ không thay — `content-type` thành
+    hai giá trị, canonical request gộp bằng dấu phẩy, ra `SignatureDoesNotMatch`.
+19. **Rate limit của P2 chặn luôn data plane.** `aws s3 sync` 1200 object dừng ở
+    file thứ ~999 với `429`. G7 phải loại data plane ra khỏi layer đó — trước
+    đó gateway không dùng thật được.

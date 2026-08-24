@@ -187,12 +187,26 @@ async fn bucket_post(State(ctx): State<AppContext>, req: Request) -> Response {
     let rid = request_id();
     let query = query_pairs(&parts);
 
-    let what = if has_param(&query, "delete") {
-        "DeleteObjects is not implemented yet"
-    } else {
-        "POST on a bucket takes ?delete"
+    if !has_param(&query, "delete") {
+        return not_implemented_after_bucket_auth(
+            &ctx,
+            &parts,
+            access_keys::ACTION_DELETE,
+            "POST on a bucket takes ?delete",
+            &rid,
+        )
+        .await;
+    }
+
+    let Ok(bytes) = axum::body::to_bytes(body, 8 * 1024 * 1024).await else {
+        return fail(
+            &parts.method,
+            &S3Error::MalformedXml("could not read the request body".to_string()),
+            parts.uri.path(),
+            &rid,
+        );
     };
-    not_implemented_after_bucket_auth(&ctx, &parts, access_keys::ACTION_DELETE, what, &rid).await
+    object::delete_objects(&ctx, &parts, bytes.to_vec(), &rid).await
 }
 
 /// A bucket is the unit of billing, so it is created in the console, not by a client.
@@ -252,27 +266,43 @@ async fn object_put(State(ctx): State<AppContext>, req: Request) -> Response {
     let query = query_pairs(&parts);
     let is_copy = parts.headers.contains_key("x-amz-copy-source");
 
-    let (action, what) = if has_param(&query, "uploadId") && has_param(&query, "partNumber") {
-        (
+    if has_param(&query, "uploadId") && has_param(&query, "partNumber") {
+        return not_implemented_after_auth(
+            &ctx,
+            &parts,
             access_keys::ACTION_MULTIPART,
             if is_copy {
                 "UploadPartCopy is not implemented yet"
             } else {
                 "UploadPart is not implemented yet"
             },
+            &rid,
         )
-    } else if is_copy {
-        (
+        .await;
+    }
+    if is_copy {
+        return not_implemented_after_auth(
+            &ctx,
+            &parts,
             access_keys::ACTION_WRITE,
             "CopyObject is not implemented yet",
+            &rid,
         )
-    } else {
-        (
-            access_keys::ACTION_WRITE,
-            "PutObject is not implemented yet",
-        )
+        .await;
+    }
+
+    // The body is read into memory because `begin_put` needs the size before any byte moves.
+    // ponytail: buffers the whole object, so a 5 GiB PutObject holds 5 GiB of RSS.
+    // Upgrade path: hand the axum body straight to `upstream::Body::Stream`, which the client already supports; that needs the handler to trust Content-Length for the reservation and stop taking `Vec<u8>`.
+    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+        return fail(
+            &parts.method,
+            &S3Error::InvalidRequest("could not read the request body".to_string()),
+            parts.uri.path(),
+            &rid,
+        );
     };
-    not_implemented_after_auth(&ctx, &parts, action, what, &rid).await
+    object::put(&ctx, &parts, bytes.to_vec(), &rid).await
 }
 
 async fn object_post(State(ctx): State<AppContext>, req: Request) -> Response {
@@ -301,18 +331,17 @@ async fn object_delete(State(ctx): State<AppContext>, req: Request) -> Response 
     let rid = request_id();
     let query = query_pairs(&parts);
 
-    let (action, what) = if has_param(&query, "uploadId") {
-        (
+    if has_param(&query, "uploadId") {
+        return not_implemented_after_auth(
+            &ctx,
+            &parts,
             access_keys::ACTION_MULTIPART,
             "AbortMultipartUpload is not implemented yet",
+            &rid,
         )
-    } else {
-        (
-            access_keys::ACTION_DELETE,
-            "DeleteObject is not implemented yet",
-        )
-    };
-    not_implemented_after_auth(&ctx, &parts, action, what, &rid).await
+        .await;
+    }
+    object::delete(&ctx, &parts, &rid).await
 }
 
 pub fn routes() -> Routes {

@@ -1,6 +1,8 @@
 //! S3 wire format.
 //!
 //! Clients parse these bodies with a real XML parser, so an unescaped `&` in a key does not produce a slightly-off error — it produces a parse failure that surfaces as something else entirely.
+use std::fmt::Write as _;
+
 use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -91,9 +93,152 @@ pub fn ok_xml(body: String, request_id: &str) -> Response {
         .into_response()
 }
 
+/// S3 caps a batch delete at 1000 keys.
+pub const MAX_DELETE_KEYS: usize = 1000;
+
+/// Parses a `DeleteObjects` request body into its keys and its Quiet flag.
+///
+/// Hand-rolled rather than given to a full XML deserialiser: the shape is two element names deep and fixed, and the failure mode that matters is a body claiming more keys than S3 allows — which a parser would happily accept.
+///
+/// # Errors
+/// `MalformedXML` for a body that is not a `<Delete>` document, has no keys, or carries more than 1000 of them.
+pub fn parse_delete_request(body: &[u8]) -> Result<(Vec<String>, bool), S3Error> {
+    let text = std::str::from_utf8(body)
+        .map_err(|_| S3Error::MalformedXml("request body is not valid UTF-8".to_string()))?;
+    if !text.contains("<Delete") {
+        return Err(S3Error::MalformedXml(
+            "expected a <Delete> document".to_string(),
+        ));
+    }
+
+    let quiet = extract(text, "Quiet")
+        .first()
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    let keys = extract(text, "Key");
+
+    if keys.is_empty() {
+        return Err(S3Error::MalformedXml(
+            "a delete request must name at least one key".to_string(),
+        ));
+    }
+    if keys.len() > MAX_DELETE_KEYS {
+        return Err(S3Error::MalformedXml(format!(
+            "a delete request may name at most {MAX_DELETE_KEYS} keys"
+        )));
+    }
+    Ok((keys, quiet))
+}
+
+/// Every text value of `<tag>` in document order.
+fn extract(text: &str, tag: &str) -> Vec<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(&open) {
+        rest = &rest[start + open.len()..];
+        let Some(end) = rest.find(&close) else { break };
+        out.push(unescape(rest[..end].trim()));
+        rest = &rest[end + close.len()..];
+    }
+    out
+}
+
+/// Reverses `escape` for the five metacharacters, so a key containing `&` round-trips.
+#[must_use]
+pub fn unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        // Last, so `&amp;lt;` does not become `<`.
+        .replace("&amp;", "&")
+}
+
+/// Renders a `DeleteResult`.
+///
+/// Quiet mode omits the `<Deleted>` entries and keeps the errors, which is the only difference S3 defines.
+#[must_use]
+pub fn delete_result(deleted: &[String], errors: &[(String, S3Error)], quiet: bool) -> String {
+    let mut out = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DeleteResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+    );
+    if !quiet {
+        for key in deleted {
+            let _ = write!(out, "<Deleted><Key>{}</Key></Deleted>", escape(key));
+        }
+    }
+    for (key, err) in errors {
+        let _ = write!(
+            out,
+            "<Error><Key>{}</Key><Code>{}</Code><Message>{}</Message></Error>",
+            escape(key),
+            escape(err.code()),
+            escape(&err.message())
+        );
+    }
+    out.push_str("</DeleteResult>");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_delete_request_parses_its_keys_and_quiet_flag() {
+        let (keys, quiet) = parse_delete_request(
+            b"<Delete><Object><Key>a.bin</Key></Object><Object><Key>b.bin</Key></Object></Delete>",
+        )
+        .unwrap();
+        assert_eq!(keys, vec!["a.bin".to_string(), "b.bin".to_string()]);
+        assert!(!quiet);
+
+        let (_, quiet) = parse_delete_request(
+            b"<Delete><Quiet>true</Quiet><Object><Key>a.bin</Key></Object></Delete>",
+        )
+        .unwrap();
+        assert!(quiet);
+    }
+
+    /// A key containing `&` arrives escaped and must come back out as the key the client meant.
+    #[test]
+    fn a_delete_key_round_trips_through_escaping() {
+        let (keys, _) =
+            parse_delete_request(b"<Delete><Object><Key>a&amp;b&lt;c.bin</Key></Object></Delete>")
+                .unwrap();
+        assert_eq!(keys, vec!["a&b<c.bin".to_string()]);
+
+        let body = delete_result(&keys, &[], false);
+        assert!(body.contains("<Key>a&amp;b&lt;c.bin</Key>"), "{body}");
+    }
+
+    #[test]
+    fn a_delete_request_is_bounded_and_must_name_something() {
+        let mut body = String::from("<Delete>");
+        for i in 0..=MAX_DELETE_KEYS {
+            let _ = write!(body, "<Object><Key>k{i}</Key></Object>");
+        }
+        body.push_str("</Delete>");
+        assert!(parse_delete_request(body.as_bytes()).is_err());
+
+        assert!(parse_delete_request(b"<Delete></Delete>").is_err());
+        assert!(parse_delete_request(b"not xml at all").is_err());
+    }
+
+    #[test]
+    fn quiet_mode_keeps_the_errors_and_drops_the_deleted_list() {
+        let deleted = vec!["a.bin".to_string()];
+        let errors = vec![("b.bin".to_string(), S3Error::AccessDenied)];
+
+        let loud = delete_result(&deleted, &errors, false);
+        assert!(loud.contains("<Deleted><Key>a.bin</Key></Deleted>"));
+        assert!(loud.contains("<Code>AccessDenied</Code>"));
+
+        let quiet = delete_result(&deleted, &errors, true);
+        assert!(!quiet.contains("<Deleted>"));
+        assert!(quiet.contains("<Code>AccessDenied</Code>"));
+    }
 
     #[test]
     fn metacharacters_are_escaped() {

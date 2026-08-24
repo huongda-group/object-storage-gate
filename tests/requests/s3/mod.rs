@@ -4,6 +4,7 @@
 mod read;
 mod scoping;
 mod wire;
+mod write;
 
 use std::future::Future;
 
@@ -150,6 +151,72 @@ impl TestGateway {
             .unwrap()
     }
 
+    /// The `buckets` row as it stands now, for the quota assertions.
+    pub async fn bucket_row(&self, name: &str) -> buckets::Model {
+        buckets::Model::find_by_user_and_name(&self.ctx.db, self.user.id, name)
+            .await
+            .unwrap()
+            .expect("bucket exists")
+    }
+
+    /// The `objects` row for a logical key, or `None` when the gateway wrote no metadata.
+    pub async fn object_row(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Option<object_storage_gate::models::objects::Model> {
+        let b = self.bucket_row(bucket).await;
+        object_storage_gate::models::objects::Model::get(&self.ctx.db, b.id, key)
+            .await
+            .unwrap()
+    }
+
+    pub async fn set_bucket_quota(&self, name: &str, max_bytes: i64) {
+        use sea_orm::{ActiveModelTrait, ActiveValue};
+        let b = self.bucket_row(name).await;
+        let mut am: buckets::ActiveModel = b.into();
+        am.max_bytes = ActiveValue::set(max_bytes);
+        am.update(&self.ctx.db).await.unwrap();
+    }
+
+    pub async fn put_with(
+        &self,
+        signer: &TestSigner,
+        path: &str,
+        body: &[u8],
+        extra: &[(&str, &str)],
+    ) -> TestResponse {
+        self.request(signer, "PUT", path, body, extra).await
+    }
+
+    pub async fn delete(&self, signer: &TestSigner, path: &str) -> TestResponse {
+        self.request(signer, "DELETE", path, b"", &[]).await
+    }
+
+    /// A `POST /{bucket}?delete` batch, built the way an S3 client builds one.
+    pub async fn post_delete(
+        &self,
+        signer: &TestSigner,
+        bucket_path: &str,
+        keys: &[&str],
+        quiet: bool,
+    ) -> TestResponse {
+        let mut body = String::from("<Delete>");
+        if quiet {
+            body.push_str("<Quiet>true</Quiet>");
+        }
+        for k in keys {
+            use std::fmt::Write as _;
+            let _ = write!(body, "<Object><Key>{k}</Key></Object>");
+        }
+        body.push_str("</Delete>");
+
+        let encoded = encode_path(bucket_path);
+        let target = format!("{encoded}?delete=");
+        let headers = signer.sign("POST", &encoded, &[("delete", "")], body.as_bytes(), &[]);
+        self.send("POST", &target, &headers, body.as_bytes()).await
+    }
+
     /// The physical key the gateway should have addressed for this bucket.
     #[must_use]
     pub fn physical(&self, logical_key: &str) -> String {
@@ -274,13 +341,19 @@ impl TestGateway {
             "DELETE" => self.request.delete(path),
             other => panic!("unsupported method {other}"),
         };
+        req = req.bytes(body.to_vec().into());
         for (k, v) in headers {
+            // content-type goes through the dedicated setter: `bytes()` already set one, `add_header` appends rather than replaces, and two content-type values are joined with a comma in the canonical request — which surfaces as a signature mismatch that names nothing.
+            if k == "content-type" {
+                req = req.content_type(v);
+                continue;
+            }
             req = req.add_header(
                 axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
                 axum::http::HeaderValue::from_str(v).unwrap(),
             );
         }
-        req.bytes(body.to_vec().into()).await
+        req.await
     }
 }
 
@@ -299,5 +372,15 @@ pub fn canned(status: u16, body: &[u8]) -> Canned {
         status,
         headers: Vec::new(),
         body: body.to_vec(),
+    }
+}
+
+/// A canned upstream 200 carrying just an `ETag`, which is what a store answers to a PUT.
+#[must_use]
+pub fn etag_ok(etag: &str) -> Canned {
+    Canned {
+        status: 200,
+        headers: vec![("etag".to_string(), etag.to_string())],
+        body: Vec::new(),
     }
 }

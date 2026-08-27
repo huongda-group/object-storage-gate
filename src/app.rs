@@ -18,8 +18,8 @@ use std::path::Path;
 use crate::{
     controllers,
     models::_entities::{
-        access_key_permissions, access_key_prefixes, access_keys, buckets, multipart_uploads,
-        objects, pools, users,
+        access_key_permissions, access_key_prefixes, access_keys, audit_logs, buckets,
+        multipart_uploads, objects, pools, users,
     },
     tasks,
     workers::downloader::DownloadWorker,
@@ -105,6 +105,7 @@ impl Hooks for App {
             .add_route(controllers::api::routes())
             .add_route(controllers::admin::routes())
             .add_route(controllers::admin_pools::routes())
+            .add_route(controllers::admin_audit::routes())
             .add_route(controllers::admin_pools::user_routes())
             .add_route(controllers::buckets::routes())
             // Last on purpose: /{bucket}/{*key} matches nearly everything, so the S3 tree must sit behind /api/*, the static console and the health endpoints.
@@ -112,14 +113,20 @@ impl Hooks for App {
     }
     async fn connect_workers(ctx: &AppContext, queue: &Queue) -> Result<()> {
         queue.register(DownloadWorker::build(ctx)).await?;
+        queue
+            .register(crate::workers::audit::AuditWorker::build(ctx))
+            .await?;
         Ok(())
     }
 
     fn register_tasks(tasks: &mut Tasks) {
         tasks.register(crate::tasks::reconcile_quota::ReconcileQuota);
+        tasks.register(crate::tasks::cleanup_multipart::CleanupMultipart);
+        tasks.register(crate::tasks::cleanup_audit::CleanupAudit);
         // tasks-inject (do not remove)
     }
     async fn truncate(ctx: &AppContext) -> Result<()> {
+        truncate_table(&ctx.db, audit_logs::Entity).await?;
         truncate_table(&ctx.db, objects::Entity).await?;
         truncate_table(&ctx.db, multipart_uploads::Entity).await?;
         truncate_table(&ctx.db, access_key_permissions::Entity).await?;

@@ -42,6 +42,12 @@ fn split_path(path: &str) -> (String, String) {
     }
 }
 
+/// The bucket and still-encoded key halves of a request path, for callers outside this module.
+#[must_use]
+pub fn split_path_public(path: &str) -> (String, String) {
+    split_path(path)
+}
+
 #[must_use]
 pub fn decode_key(encoded: &str) -> String {
     percent_encoding::percent_decode_str(encoded)

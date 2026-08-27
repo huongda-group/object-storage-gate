@@ -31,5 +31,12 @@ services:
       db:
         condition: service_healthy
 
+  worker:
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-object_storage_gate_production}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   mysqldata:

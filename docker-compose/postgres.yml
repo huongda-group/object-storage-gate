@@ -26,5 +26,12 @@ services:
       db:
         condition: service_healthy
 
+  worker:
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-object-storage-gate_production}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:

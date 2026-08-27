@@ -246,6 +246,30 @@ trong URL. Đổi thì ra `SignatureDoesNotMatch`, và lỗi đó trông y hệt
 
 Dọn: `docker rm -f osg-upstream`.
 
+## Worker là một process riêng
+
+`workers.mode` ở production là `BackgroundQueue`, và audit đi qua queue đó. Nhưng
+`object_storage_gate-cli start` **chỉ phục vụ HTTP** — không rút queue. Không có
+worker thì entry chất đống trong Redis và bảng `audit_logs` rỗng, mà không có
+lỗi nào báo.
+
+Compose đã có service `worker` chạy `start --worker`. Kiểm sau khi rollout:
+
+```sh
+docker compose exec valkey valkey-cli LLEN queue:default   # phải về 0
+docker compose exec -T db psql -U $POSTGRES_USER -c \
+  "SELECT action, outcome, count(*) FROM audit_logs GROUP BY 1,2;"
+```
+
+Redis rớt thì request S3 vẫn phải chạy — audit là quan sát, không phải chức
+năng. Kiểm:
+
+```sh
+docker compose stop valkey
+aws s3 cp s3://media-cdn/img/a.txt - --endpoint-url $H   # vẫn phải in ra nội dung
+docker compose start valkey
+```
+
 ## Sao lưu
 
 Chụp một bản dump trước mỗi lần rollout có migration. `cargo loco db dump` chỉ

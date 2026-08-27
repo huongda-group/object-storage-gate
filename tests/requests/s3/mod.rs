@@ -1,6 +1,7 @@
 //! The S3 data-plane test harness.
 //!
 //! Every test here runs against a real app instance with a mock object store behind it, so a test can assert the thing that matters most: that the store was never touched.
+mod audit;
 mod copy;
 mod listing;
 mod multipart;

@@ -19,6 +19,7 @@ mod m20260817_000006_quota_checks;
 mod m20260818_000001_pools;
 mod m20260818_000002_bucket_pool;
 mod m20260818_000003_multipart_uploads;
+mod m20260818_000004_audit_logs;
 
 pub struct Migrator;
 
@@ -44,6 +45,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260818_000001_pools::Migration),
             Box::new(m20260818_000002_bucket_pool::Migration),
             Box::new(m20260818_000003_multipart_uploads::Migration),
+            Box::new(m20260818_000004_audit_logs::Migration),
             // inject-above (do not remove this comment)
         ]
     }

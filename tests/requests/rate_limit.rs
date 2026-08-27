@@ -29,3 +29,48 @@ async fn login_is_rate_limited() {
     })
     .await;
 }
+
+/// The data plane must not be throttled by the same layer.
+///
+/// The limiter exists to stop password guessing on login. Applied to S3 as well it breaks the
+/// product: `aws s3 sync` of 1200 objects stopped at the ~999th with a 429 before this was fixed,
+/// and a multipart upload of a large file trips it too. `SigV4` per access key is the data plane's
+/// control, and it is a stronger one than a per-IP bucket.
+#[tokio::test]
+#[serial]
+async fn the_s3_data_plane_is_not_rate_limited() {
+    request::<App, _, _>(|request, _ctx| async move {
+        for i in 0..80 {
+            let res = request
+                .get("/media-cdn/img/a.png")
+                .add_header(
+                    axum::http::HeaderName::from_static("authorization"),
+                    axum::http::HeaderValue::from_static("AWS4-HMAC-SHA256 not-a-real-credential"),
+                )
+                .await;
+            assert_ne!(
+                res.status_code(),
+                429,
+                "the data plane was throttled on request {i}"
+            );
+        }
+    })
+    .await;
+}
+
+/// The console and its assets are outside the limiter too — a page load fetches many of them.
+#[tokio::test]
+#[serial]
+async fn the_console_is_not_rate_limited() {
+    request::<App, _, _>(|request, _ctx| async move {
+        for i in 0..80 {
+            let res = request.get("/static/js/does-not-exist.js").await;
+            assert_ne!(
+                res.status_code(),
+                429,
+                "the console was throttled on request {i}"
+            );
+        }
+    })
+    .await;
+}

@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod admin_audit;
 pub mod admin_pools;
 pub mod api;
 pub mod auth;

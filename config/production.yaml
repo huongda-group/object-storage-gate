@@ -40,7 +40,15 @@ server:
       fallback: "frontend/dist/index.html"
 
 workers:
-  mode: BackgroundAsync
+  # BackgroundQueue, not BackgroundAsync: an in-process queue loses every audit entry queued at the
+  # moment of a restart, and a missing audit trail on a multi-tenant gateway is a compliance
+  # problem rather than a performance one.
+  mode: BackgroundQueue
+
+queue:
+  kind: Redis
+  uri: "{{ get_env(name="REDIS_URL") }}"
+  dangerously_flush: false
 
 # No mailer block: P1 removed every mail-based auth flow and deleted src/mailers, so
 # ctx.mailer is None and nothing asks for it. A slice that brings mail back has to add this

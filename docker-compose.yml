@@ -9,9 +9,8 @@
 # auto_migrate đã tắt trên production. Chạy migration như một bước riêng trước khi rollout:
 #   docker compose run --rm app object_storage_gate-cli db migrate
 #
-# Redis/Valkey từng nằm ở đây nhưng không code nào đọc REDIS_URL, nên nó chỉ đốt bộ nhớ và
-# một volume trong khi làm người vận hành tin rằng queue đã bền và có distributed lock. Nó
-# quay lại ở slice cắm queue thật — xem docs/superpowers/plans/2026-08-17-go-live-roadmap.md.
+# Valkey quay lại ở đây vì audit worker đã đọc REDIS_URL thật. P2 gỡ nó ra đúng lúc không code
+# nào dùng — một Redis chạy không ai đọc chỉ làm người vận hành tin rằng queue đã bền.
 services:
   app:
     build: .
@@ -23,8 +22,45 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       OSG_MASTER_KEY: ${OSG_MASTER_KEY:?set OSG_MASTER_KEY (base64 of 32 random bytes)}
       SERVER_HOST: ${SERVER_HOST:?set SERVER_HOST, e.g. https://osg.example.com}
+      REDIS_URL: redis://valkey:6379
+    depends_on:
+      valkey:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "object_storage_gate-cli", "--help"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Running it revealed this: `cargo loco start` serves HTTP and nothing else, so with
+  # workers.mode = BackgroundQueue the audit entries pile up in Redis and the table stays empty.
+  # A separate worker process is what drains them; the app image is the same, only the command
+  # differs.
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["object_storage_gate-cli", "start", "--worker"]
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      OSG_MASTER_KEY: ${OSG_MASTER_KEY:?set OSG_MASTER_KEY (base64 of 32 random bytes)}
+      SERVER_HOST: ${SERVER_HOST:?set SERVER_HOST, e.g. https://osg.example.com}
+      REDIS_URL: redis://valkey:6379
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+  # --appendonly yes is deliberate: an audit entry sitting in the queue when Valkey restarts is
+  # exactly what the queue exists not to lose.
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkeydata:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  valkeydata:

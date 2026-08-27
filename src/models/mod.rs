@@ -2,6 +2,7 @@ pub mod _entities;
 pub mod access_key_permissions;
 pub mod access_key_prefixes;
 pub mod access_keys;
+pub mod audit_logs;
 pub mod buckets;
 pub mod crypto;
 pub mod multipart_uploads;

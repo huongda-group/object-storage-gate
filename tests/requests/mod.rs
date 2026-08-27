@@ -1,4 +1,5 @@
 mod admin;
+mod admin_audit;
 mod admin_pools;
 mod api;
 mod auth;

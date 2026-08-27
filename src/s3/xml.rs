@@ -43,9 +43,24 @@ pub fn error_body(err: &S3Error, resource: &str, request_id: &str) -> String {
     )
 }
 
+/// The S3 error code, carried in a response extension so the audit layer can read it.
+///
+/// An extension rather than a header: it never reaches the wire, and the audit needs a code the
+/// status alone cannot supply — the same 403 covers a wrong signature, a missing permission and a
+/// full bucket.
+#[derive(Debug, Clone)]
+pub struct ErrorCode(pub String);
+
 /// An error response for a verb that carries a body.
 #[must_use]
 pub fn error_response(err: &S3Error, resource: &str, request_id: &str) -> Response {
+    let mut res = error_response_inner(err, resource, request_id);
+    res.extensions_mut()
+        .insert(ErrorCode(err.code().to_string()));
+    res
+}
+
+fn error_response_inner(err: &S3Error, resource: &str, request_id: &str) -> Response {
     (
         err.status(),
         [
@@ -65,6 +80,13 @@ pub fn error_response(err: &S3Error, resource: &str, request_id: &str) -> Respon
 /// botocore reads Content-Length on a HEAD and a body here makes it mis-parse or hang, so the method decides this — `error_response` is never asked to guess.
 #[must_use]
 pub fn error_response_headless(err: &S3Error, request_id: &str) -> Response {
+    let mut res = error_response_headless_inner(err, request_id);
+    res.extensions_mut()
+        .insert(ErrorCode(err.code().to_string()));
+    res
+}
+
+fn error_response_headless_inner(err: &S3Error, request_id: &str) -> Response {
     (
         err.status(),
         [(

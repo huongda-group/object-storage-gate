@@ -383,7 +383,8 @@ fn between(haystack: &str, open: &str, close: &str) -> Option<String> {
     let start = haystack.find(open)? + open.len();
     let rest = &haystack[start..];
     let end = rest.find(close)?;
-    Some(rest[..end].trim().to_string())
+    // Unescaped here, because the caller escapes again when it renders the error: without this an upstream message containing an apostrophe reaches the client as `&#39;`.
+    Some(crate::s3::xml::unescape(rest[..end].trim()))
 }
 
 #[cfg(test)]

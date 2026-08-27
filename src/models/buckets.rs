@@ -26,6 +26,13 @@ impl ActiveModelBehavior for super::_entities::buckets::ActiveModel {
     }
 }
 
+/// Names the gateway itself serves on, which therefore cannot be buckets.
+///
+/// A bucket called `api` or `static` would be created happily and then be unreachable over S3,
+/// because those paths belong to the management API and the console. Refusing at creation is the
+/// only point where that is visible to the person making the mistake.
+pub const RESERVED_BUCKET_NAMES: &[&str] = &["api", "static", "assets"];
+
 /// Longest bucket name the API accepts, matching the S3 bucket-name rules the console mirrors.
 pub const MAX_BUCKET_NAME_LEN: usize = 63;
 
@@ -62,6 +69,11 @@ pub fn validate_name(name: &str) -> ModelResult<()> {
     }
     if name.contains("..") {
         return Err(ModelError::msg("bucket name may not contain '..'"));
+    }
+    if RESERVED_BUCKET_NAMES.contains(&name) {
+        return Err(ModelError::msg(
+            "bucket name is reserved by the gateway; pick another",
+        ));
     }
     Ok(())
 }

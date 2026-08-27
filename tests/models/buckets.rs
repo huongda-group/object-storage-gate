@@ -172,3 +172,28 @@ async fn list_for_user_excludes_other_owners() {
     let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, vec!["a-one", "a-two"]); // ordered by name
 }
+
+/// A bucket named after a path the gateway serves on would be created happily and then be
+/// unreachable over S3. Refusing at creation is the only point where that is visible.
+#[tokio::test]
+#[serial]
+async fn reserved_names_are_refused() {
+    let boot = boot_test::<App>().await.expect("boot");
+    let db = &boot.app_context.db;
+    let uid = user(db, "reserved@ex.com").await;
+    let p = pool(db, "main").await;
+
+    for name in object_storage_gate::models::buckets::RESERVED_BUCKET_NAMES {
+        assert!(
+            buckets::Model::create(db, uid, p.id, name, 0)
+                .await
+                .is_err(),
+            "reserved name {name} was accepted"
+        );
+    }
+
+    // A name that merely starts with a reserved one is fine.
+    assert!(buckets::Model::create(db, uid, p.id, "api-logs", 0)
+        .await
+        .is_ok());
+}

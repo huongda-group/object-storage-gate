@@ -37,7 +37,8 @@ fn tag(text: &str, name: &str) -> Option<String> {
     let start = text.find(&open)? + open.len();
     let rest = &text[start..];
     let end = rest.find(&close)?;
-    Some(rest[..end].trim().to_string())
+    // Unescaped: an upstream ETag arrives as `&#34;abc&#34;`, and storing the entity text makes the gateway hand back a literal `&#34;` where a quote belongs.
+    Some(crate::s3::xml::unescape(rest[..end].trim()))
 }
 
 fn etag_header(res: &upstream::UpstreamResponse) -> String {

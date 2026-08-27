@@ -121,7 +121,7 @@ async fn the_s3_catch_all_does_not_shadow_the_management_api() {
             res.status_code()
         );
 
-        // The console still owns `/`. The S3 tree deliberately does not route it: an S3 handler there shadows the whole SPA, and G5 has to solve that collision when ListBuckets lands.
+        // The console still owns `/` for an unsigned request. ListBuckets is routed there too, but S3 has no anonymous ListBuckets, so credentials are what tells the two apart.
         let res = g.raw_get("/", &[]).await;
         assert_eq!(res.status_code(), 200);
         assert!(!res.text().contains("<Error><Code>"), "{}", res.text());
@@ -135,7 +135,12 @@ async fn the_s3_catch_all_does_not_shadow_the_management_api() {
         assert!(!res.text().contains("<Error><Code>"), "{}", res.text());
 
         // A console deep link is a browser navigation, not an object request, and must reach the SPA.
-        let res = g.raw_get("/buckets/media-cdn", &[]).await;
+        let res = g
+            .raw_get(
+                "/buckets/media-cdn",
+                &[("accept".to_string(), "text/html".to_string())],
+            )
+            .await;
         assert_eq!(res.status_code(), 200);
         assert!(!res.text().contains("<Error><Code>"), "{}", res.text());
 

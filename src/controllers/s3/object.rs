@@ -151,7 +151,7 @@ const FORWARD_ON_WRITE: &[&str] = &[
     "expires",
 ];
 
-fn forwarded_write_headers(parts: &Parts) -> Vec<(String, String)> {
+pub fn forwarded_write_headers(parts: &Parts) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (name, value) in &parts.headers {
         let lower = name.as_str().to_ascii_lowercase();
@@ -344,12 +344,23 @@ async fn delete_objects_inner(
     }
     upstream_body.push_str("</Delete>");
 
+    // Content-MD5 is required on DeleteObjects and the store enforces it. The gateway sends its own
+    // body — only the authorised keys — so it has to compute the digest itself; forwarding the
+    // client's would describe a different document.
+    let bytes = upstream_body.into_bytes();
+    let digest = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        <md5::Md5 as md5::Digest>::digest(&bytes),
+    );
     let upstream_req = UpstreamRequest {
         method: "POST".to_string(),
         key: String::new(),
         query: vec![("delete".to_string(), String::new())],
-        headers: vec![("content-type".to_string(), "application/xml".to_string())],
-        body: upstream::Body::Bytes(upstream_body.into_bytes()),
+        headers: vec![
+            ("content-type".to_string(), "application/xml".to_string()),
+            ("content-md5".to_string(), digest),
+        ],
+        body: upstream::Body::Bytes(bytes),
     };
     client.send(upstream_req).await?;
 

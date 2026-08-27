@@ -145,7 +145,9 @@ async fn a_write_is_recorded_with_its_action() {
 #[serial]
 async fn a_console_request_is_not_audited() {
     with_gateway(|g| async move {
-        g.raw_get("/buckets/media-cdn", &[]).await;
+        // Accept: text/html is what a navigation actually sends, and it is what tells the gateway this is not an S3 request.
+        let navigation = [("accept".to_string(), "text/html".to_string())];
+        g.raw_get("/buckets/media-cdn", &navigation).await;
         g.raw_get("/static/js/app.js", &[]).await;
 
         assert!(drain(&g).await.is_empty());

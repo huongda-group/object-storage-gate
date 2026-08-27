@@ -34,16 +34,74 @@ use crate::{
 /// `SigV4` credentials are the signal: an S3 client always presents one, a browser never does.
 #[must_use]
 pub fn is_s3_request(parts: &Parts) -> bool {
+    // 1. Credentials, in either form. An S3 client that signs is unambiguous.
     let signed_header = parts
         .headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.starts_with("AWS4-HMAC-SHA256"));
-    signed_header
-        || parts
-            .uri
-            .query()
-            .is_some_and(|q| q.to_ascii_lowercase().contains("x-amz-signature="))
+    let query = parts.uri.query().unwrap_or_default().to_ascii_lowercase();
+    if signed_header || query.contains("x-amz-signature=") {
+        return true;
+    }
+
+    // 2. A query parameter only S3 uses. An unsigned S3 request still carries these, and a browser never does.
+    for marker in [
+        "list-type=",
+        "uploads",
+        "uploadid=",
+        "partnumber=",
+        "delete",
+        "versionid=",
+        "x-amz-",
+    ] {
+        if query.contains(marker) {
+            return true;
+        }
+    }
+
+    // 3. The root is the console unless credentials say otherwise. S3 has no anonymous
+    // ListBuckets at all, so an unsigned GET / is a browser asking for the app, never an S3 call.
+    if parts.uri.path() == "/" {
+        return false;
+    }
+
+    // 4. The gateway serves its own paths on these names, so they are never buckets.
+    // `buckets::validate_name` refuses the same list, which is what keeps the two ends honest: an
+    // unrouted /api path answers from the management API rather than as AccessDenied from S3, and a
+    // console asset that does not exist is a 404 from the console rather than an S3 error.
+    let path = parts.uri.path();
+    let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    if crate::models::buckets::RESERVED_BUCKET_NAMES.contains(&first) {
+        return false;
+    }
+
+    // 5. A browser navigation. Only a navigation asks for HTML, so this is what keeps console deep links working without a database lookup.
+    if parts
+        .headers
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/html"))
+    {
+        return false;
+    }
+
+    // 6. A file the console actually ships. Assets are fetched with Accept: text/css or */*, so they land here rather than above.
+    if console_file_exists(path) {
+        return false;
+    }
+
+    // Everything else is treated as S3, so an unsigned S3 request gets AccessDenied rather than a page of HTML.
+    true
+}
+
+/// Whether `frontend/dist` holds a file at this path.
+fn console_file_exists(path: &str) -> bool {
+    let rel = path.trim_start_matches('/');
+    if rel.is_empty() || rel.contains("..") {
+        return false;
+    }
+    std::path::Path::new("frontend/dist").join(rel).is_file()
 }
 
 /// Serves the console for anything that reached an S3 route without S3 credentials.
@@ -462,4 +520,26 @@ pub fn routes() -> Routes {
                 .post(object_post)
                 .delete(object_delete),
         )
+}
+
+/// The trailing-slash form of a bucket path, registered straight on the axum router.
+///
+/// Clients send both `/{bucket}` and `/{bucket}/` — botocore's own URL builder appends the slash
+/// for a bucket-level request — and to axum those are different routes. loco's `Routes` refuses the
+/// second as a duplicate of the first, so it is added here instead.
+///
+/// Normalising the path in a layer would be the obvious alternative and is wrong: the client signed
+/// the URI it sent, so trimming the slash before verification turns every such request into
+/// `SignatureDoesNotMatch`.
+pub fn trailing_slash_bucket_router(ctx: AppContext) -> axum::Router {
+    axum::Router::new()
+        .route(
+            "/{bucket}/",
+            get(bucket_get)
+                .head(bucket_head)
+                .post(bucket_post)
+                .put(bucket_write_refused)
+                .delete(bucket_write_refused),
+        )
+        .with_state(ctx)
 }

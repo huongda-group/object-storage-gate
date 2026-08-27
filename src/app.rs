@@ -93,6 +93,12 @@ impl Hooks for App {
         Ok(ctx)
     }
 
+    // The trailing-slash bucket form cannot go through `Routes`: loco treats `/{bucket}/` as a
+    // duplicate of `/{bucket}` and panics, while axum routes them separately.
+    async fn after_routes(router: axum::Router, ctx: &AppContext) -> Result<axum::Router> {
+        Ok(router.merge(controllers::s3::trailing_slash_bucket_router(ctx.clone())))
+    }
+
     async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
         Ok(vec![Box::new(
             crate::initializers::rate_limit::RateLimitInitializer,

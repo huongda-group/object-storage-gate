@@ -24,8 +24,8 @@
 | G3 | Biên giới cách ly + đường đọc | `2026-08-17-g3-isolation-boundary-and-read-path.md` | slice #2, #3 | G2 — **XONG** |
 | G4 | Đường ghi + quota | `2026-08-17-g4-write-path-and-quota.md` | slice #3, #4 | G3, 5 — **XONG** |
 | G5 | Listing đọc từ DB | `2026-08-17-g5-listing-from-db.md` | slice #3 | G3 — **XONG** |
-| G6 | Multipart, copy, presigned | `2026-08-17-g6-multipart-copy-presigned.md` | slice #5 | G4 |
-| G7 | Audit, jobs, conformance | `2026-08-17-g7-audit-jobs-and-conformance.md` | slice #6 | G6 |
+| G6 | Multipart, copy, presigned | `2026-08-17-g6-multipart-copy-presigned.md` | slice #5 | G4 — **XONG** |
+| G7 | Audit, jobs, conformance | `2026-08-17-g7-audit-jobs-and-conformance.md` | slice #6 | G6 — **XONG**, trừ golden file |
 
 Giai đoạn 1, 2, 3 độc lập nhau — chạy song song được nếu có nhiều người.
 Giai đoạn 4 cần API admin của giai đoạn 1. Giai đoạn 5 cần index và guard của
@@ -171,3 +171,14 @@ Những cái này chỉ lộ ra khi chạy thật, không lộ khi đọc code:
 19. **Rate limit của P2 chặn luôn data plane.** `aws s3 sync` 1200 object dừng ở
     file thứ ~999 với `429`. G7 phải loại data plane ra khỏi layer đó — trước
     đó gateway không dùng thật được.
+20. **`start` không chạy worker.** Với `BackgroundQueue`, audit chất đống trong
+    Redis và bảng rỗng, không lỗi nào báo. Phải có process `start --worker`
+    riêng; compose đã thêm service `worker`.
+21. **Bộ conformance bắt sáu lỗi mà upstream giả không bắt được** — xem
+    `tests/s3/README.md`. Đáng chú ý nhất: `GET /{bucket}/` (có dấu `/` cuối)
+    không khớp route nào nên trả HTML của console cho một `ListObjectsV2`.
+22. **Không normalize path bằng layer được.** Cắt dấu `/` cuối trước khi verify
+    làm mọi request dạng đó thành `SignatureDoesNotMatch` — client đã ký đúng
+    URI nó gửi. Route dạng đó phải đăng ký thẳng vào axum.
+23. **`api`, `static`, `assets` không được làm tên bucket.** Chúng là path
+    gateway tự phục vụ; tạo được thì bucket đó vĩnh viễn không tới được qua S3.

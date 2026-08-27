@@ -32,15 +32,31 @@ pub fn escape(s: &str) -> String {
 /// `Resource` is the logical path the client asked for, never the physical one — the whole point of the gateway is that a client never learns the physical layout, and an error body is the easiest place to leak it.
 #[must_use]
 pub fn error_body(err: &S3Error, resource: &str, request_id: &str) -> String {
-    format!(
+    // S3 names the bucket and key separately as well as the resource, and clients read those:
+    // botocore surfaces them on the exception, and a suite that asserts on <Key> sees nothing
+    // without them. Both halves are the logical ones the client asked for.
+    let trimmed = resource.trim_start_matches('/');
+    let (bucket, key) = trimmed.split_once('/').unwrap_or((trimmed, ""));
+
+    let mut out = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-         <Error><Code>{}</Code><Message>{}</Message>\
-         <Resource>{}</Resource><RequestId>{}</RequestId></Error>",
+         <Error><Code>{}</Code><Message>{}</Message>",
         escape(err.code()),
-        escape(&err.message()),
+        escape(&err.message())
+    );
+    if !bucket.is_empty() {
+        let _ = write!(out, "<BucketName>{}</BucketName>", escape(bucket));
+    }
+    if !key.is_empty() {
+        let _ = write!(out, "<Key>{}</Key>", escape(key));
+    }
+    let _ = write!(
+        out,
+        "<Resource>{}</Resource><RequestId>{}</RequestId></Error>",
         escape(resource),
         escape(request_id)
-    )
+    );
+    out
 }
 
 /// The S3 error code, carried in a response extension so the audit layer can read it.
@@ -166,15 +182,24 @@ fn extract(text: &str, tag: &str) -> Vec<String> {
     out
 }
 
-/// Reverses `escape` for the five metacharacters, so a key containing `&` round-trips.
+/// Reverses `escape`, and also decodes the numeric entities other servers emit.
+///
+/// `MinIO` writes a quoted `ETag` as `&#34;abc&#34;` rather than `&quot;abc&quot;`. Leaving those
+/// undecoded stores the entity text as part of the `ETag`, and the value the gateway hands back is
+/// then escaped again — so a client sees a literal `&#34;` where a quote belongs.
 #[must_use]
 pub fn unescape(s: &str) -> String {
     s.replace("&lt;", "<")
+        .replace("&#60;", "<")
         .replace("&gt;", ">")
+        .replace("&#62;", ">")
         .replace("&quot;", "\"")
+        .replace("&#34;", "\"")
         .replace("&apos;", "'")
+        .replace("&#39;", "'")
         // Last, so `&amp;lt;` does not become `<`.
         .replace("&amp;", "&")
+        .replace("&#38;", "&")
 }
 
 /// Renders a `DeleteResult`.

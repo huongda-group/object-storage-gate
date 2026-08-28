@@ -22,6 +22,7 @@ mod m20260818_000001_pools;
 mod m20260818_000002_bucket_pool;
 mod m20260818_000003_multipart_uploads;
 mod m20260818_000004_audit_logs;
+mod m20260828_000001_identifier_collation;
 
 pub struct Migrator;
 
@@ -48,6 +49,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260818_000002_bucket_pool::Migration),
             Box::new(m20260818_000003_multipart_uploads::Migration),
             Box::new(m20260818_000004_audit_logs::Migration),
+            Box::new(m20260828_000001_identifier_collation::Migration),
             // inject-above (do not remove this comment)
         ]
     }

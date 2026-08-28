@@ -16,7 +16,7 @@ const IDENTIFIER_COLUMNS: &[(&str, &str, u32)] = &[
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, m: &SchemaManager) -> Result<(), DbErr> {
-        // Postgres and SQLite already compare these byte for byte.
+        // SQLite already compares these byte for byte; Postgres does so only on a C or POSIX cluster, which m20260828_000001 stops assuming.
         // MySQL 8 defaults to utf8mb4_0900_ai_ci, which folds case and accents, so PUT Photos/A.JPG followed by PUT photos/a.jpg collides on the unique index and one object silently overwrites the other.
         // S3 object keys are case-sensitive.
         //

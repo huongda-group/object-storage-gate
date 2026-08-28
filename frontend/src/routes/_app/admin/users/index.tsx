@@ -1,6 +1,11 @@
 // Ported from console-object-storage-gate/project/Admin Users.dc.html.
 // The mock users have no pid, so the detail route is keyed by email until slice #7 returns real pids from GET /api/admin/users.
-import { Link, createFileRoute, redirect } from "@tanstack/react-router";
+import {
+  Link,
+  createFileRoute,
+  redirect,
+  useRouter,
+} from "@tanstack/react-router";
 import { useState } from "react";
 import { Header } from "../../../../components/Header";
 import {
@@ -27,18 +32,22 @@ import {
   monoStyle,
   useRowMenu,
 } from "../../../../components/ui";
-import { colorFor, fmt } from "../../../../lib/format";
 import {
-  ADMIN_USERS,
   type AdminUser,
-  GRANTED_QUOTA_LINE,
-  UNITS,
-} from "../../../../lib/mock";
+  createUser,
+  listUsers,
+  updateUser,
+} from "../../../../lib/admin";
+import { run } from "../../../../lib/api-client";
+import { UNITS } from "../../../../lib/dashboard";
+import { colorFor, fmt } from "../../../../lib/format";
 
 export const Route = createFileRoute("/_app/admin/users/")({
+  // UX guard only — AdminCaller is the real gate, on the server.
   beforeLoad: ({ context }) => {
     if (context.user.role !== "admin") throw redirect({ to: "/" });
   },
+  loader: () => listUsers(),
   component: AdminUsers,
 });
 
@@ -46,9 +55,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type UserForm = {
   mode: "create" | "edit";
-  origEmail: string | null;
+  pid: string | null;
   email: string;
   name: string;
+  /// Only set when creating: the temporary password the user must replace at first login.
+  password: string;
   role: "user" | "admin";
   num: string;
   unit: keyof typeof UNITS;
@@ -58,9 +69,10 @@ type UserForm = {
 
 const NEW_USER: UserForm = {
   mode: "create",
-  origEmail: null,
+  pid: null,
   email: "",
   name: "",
+  password: "",
   role: "user",
   num: "100",
   unit: "GiB",
@@ -73,7 +85,9 @@ function AdminUsers() {
   const toast = useToast();
   const menu = useRowMenu();
 
-  const [users, setUsers] = useState<AdminUser[]>(ADMIN_USERS);
+  const router = useRouter();
+  const users: AdminUser[] = Route.useLoaderData();
+  const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "user" | "admin">("all");
   const [nearFull, setNearFull] = useState(false);
@@ -94,7 +108,10 @@ function AdminUsers() {
     const q = query.toLowerCase();
     rows = rows.filter((u) => (u.email + u.name).toLowerCase().includes(q));
   }
-  if (nearFull) rows = rows.filter((u) => u.max && u.used / u.max >= 0.9);
+  if (nearFull)
+    rows = rows.filter(
+      (u) => u.max_bytes > 0 && u.used_bytes / u.max_bytes >= 0.9,
+    );
 
   const emailTrim = form?.email.trim() ?? "";
   const emailDup =
@@ -107,57 +124,70 @@ function AdminUsers() {
       : emailDup
         ? "Email đã tồn tại."
         : "";
-  const nameErr = !form?.name.trim();
-  const formValid = !emailErr && !nameErr;
+  const nameErr = !form?.name.trim() || form.name.trim().length < 2;
+  // The server enforces eight characters; say so before the round trip.
+  const passwordErr =
+    form?.mode === "create" && form.password.length < 8
+      ? "Mật khẩu tạm phải từ 8 ký tự."
+      : "";
+  const formValid = !emailErr && !nameErr && !passwordErr;
 
   const quotaBytes = quotaForm.unlimited
     ? 0
     : Number.parseFloat(quotaForm.num || "0") * UNITS[quotaForm.unit];
   const quotaWarn =
-    !!quotaFor && !quotaForm.unlimited && quotaBytes < quotaFor.used;
+    !!quotaFor && !quotaForm.unlimited && quotaBytes < quotaFor.used_bytes;
 
   // Spec §6.9: an admin may not demote themselves.
   const selfDemote =
     !!roleFor && roleFor.email === user.email && nextRole === "user";
 
-  function saveUser() {
-    if (!form) return;
+  async function saveUser() {
+    if (!form || busy) return;
     if (!formValid) {
       setForm({ ...form, touched: true });
       return;
     }
+    setBusy(true);
+
     if (form.mode === "create") {
       const max = form.unlimited
         ? 0
-        : Number.parseFloat(form.num || "0") * UNITS[form.unit];
-      // TODO(slice#7): POST /api/admin/users
-      setUsers([
-        ...users,
-        {
-          email: emailTrim,
+        : Math.round(Number.parseFloat(form.num || "0") * UNITS[form.unit]);
+      const created = await run(
+        () =>
+          createUser({
+            email: emailTrim,
+            name: form.name.trim(),
+            password: form.password,
+            role: form.role,
+            max_bytes: max,
+          }),
+        { onError: (m) => toast(m, "danger") },
+      );
+      setBusy(false);
+      if (!created) return;
+      setForm(null);
+      await router.invalidate();
+      toast(
+        `Đã tạo ${emailTrim}. Gửi mật khẩu tạm cho họ — hệ thống không gửi mail.`,
+      );
+      return;
+    }
+
+    const updated = await run(
+      () =>
+        updateUser(form.pid ?? "", {
           name: form.name.trim(),
           role: form.role,
-          used: 0,
-          max,
-          buckets: 0,
-          keys: "0/0",
-          ver: false,
-          created: "vừa xong",
-        },
-      ]);
-      toast(`Đã tạo user ${emailTrim}`);
-    } else {
-      // TODO(slice#7): PATCH /api/admin/users/:pid
-      setUsers(
-        users.map((u) =>
-          u.email === form.origEmail
-            ? { ...u, name: form.name.trim(), role: form.role }
-            : u,
-        ),
-      );
-      toast("Đã cập nhật thông tin user");
-    }
+        }),
+      { onError: (m) => toast(m, "danger") },
+    );
+    setBusy(false);
+    if (!updated) return;
     setForm(null);
+    await router.invalidate();
+    toast("Đã cập nhật thông tin user");
   }
 
   return (
@@ -196,7 +226,7 @@ function AdminUsers() {
           <div>
             <H1>Users</H1>
             <div style={{ fontSize: 13, color: "var(--dim)", marginTop: 5 }}>
-              {rows.length} user · {GRANTED_QUOTA_LINE}
+              {rows.length} user
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -268,21 +298,18 @@ function AdminUsers() {
                 <Th width={150}>TÊN</Th>
                 <Th width={90}>ROLE</Th>
                 <Th width={310}>DUNG LƯỢNG</Th>
-                <Th align="right" width={80}>
-                  BUCKET
-                </Th>
-                <Th align="right" width={80}>
-                  KEY
-                </Th>
-                <Th align="center" width={90}>
-                  EMAIL OK
+                <Th align="center" width={140}>
+                  MẬT KHẨU TẠM
                 </Th>
                 <Th width={56} />
               </tr>
             </thead>
             <tbody>
               {rows.map((u) => {
-                const pct = u.max ? Math.min(100, (u.used / u.max) * 100) : 0;
+                const pct =
+                  u.max_bytes > 0
+                    ? Math.min(100, (u.used_bytes / u.max_bytes) * 100)
+                    : 0;
                 const id = `u-${u.email}`;
                 return (
                   <tr
@@ -293,7 +320,7 @@ function AdminUsers() {
                     <Td>
                       <Link
                         to="/admin/users/$pid"
-                        params={{ pid: u.email }}
+                        params={{ pid: u.pid }}
                         style={{ fontSize: "var(--fs)" }}
                       >
                         {u.email}
@@ -328,7 +355,7 @@ function AdminUsers() {
                           gap: 12,
                         }}
                       >
-                        {u.max ? (
+                        {u.max_bytes ? (
                           <div
                             style={{
                               flex: 1,
@@ -368,40 +395,22 @@ function AdminUsers() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {u.max
-                            ? `${fmt(u.used)} / ${fmt(u.max)} (${pct.toFixed(1)}%)`
-                            : `${fmt(u.used)} đã dùng`}
+                          {u.max_bytes
+                            ? `${fmt(u.used_bytes)} / ${fmt(u.max_bytes)} (${pct.toFixed(1)}%)`
+                            : `${fmt(u.used_bytes)} đã dùng`}
                         </div>
                       </div>
                     </Td>
                     <Td
-                      align="right"
-                      style={{
-                        ...monoStyle,
-                        fontSize: 13,
-                        color: "var(--dim)",
-                      }}
-                    >
-                      {u.buckets}
-                    </Td>
-                    <Td
-                      align="right"
-                      style={{
-                        ...monoStyle,
-                        fontSize: 13,
-                        color: "var(--dim)",
-                      }}
-                    >
-                      {u.keys}
-                    </Td>
-                    <Td
                       align="center"
                       style={{
-                        fontSize: 13,
-                        color: u.ver ? "var(--ok)" : "var(--faint)",
+                        fontSize: 12.5,
+                        color: u.must_change_password
+                          ? "var(--warn)"
+                          : "var(--faint)",
                       }}
                     >
-                      {u.ver ? "✓" : "!"}
+                      {u.must_change_password ? "chưa đổi" : "—"}
                     </Td>
                     <Td
                       align="center"
@@ -412,7 +421,7 @@ function AdminUsers() {
                         <RowMenu pos={menu.pos}>
                           <Link
                             to="/admin/users/$pid"
-                            params={{ pid: u.email }}
+                            params={{ pid: u.pid }}
                             className="menuItem"
                             style={menuItemStyle}
                             onClick={menu.close}
@@ -427,8 +436,9 @@ function AdminUsers() {
                               menu.close();
                               setForm({
                                 mode: "edit",
-                                origEmail: u.email,
+                                pid: u.pid,
                                 email: u.email,
+                                password: "",
                                 name: u.name,
                                 role: u.role,
                                 num: "100",
@@ -450,7 +460,7 @@ function AdminUsers() {
                               setQuotaForm({
                                 num: "500",
                                 unit: "GiB",
-                                unlimited: !u.max,
+                                unlimited: u.max_bytes === 0,
                               });
                             }}
                           >
@@ -533,6 +543,54 @@ function AdminUsers() {
               )}
             </div>
 
+            {form.mode === "create" && (
+              <div>
+                <div
+                  style={{ fontSize: 12, color: "var(--dim)", marginBottom: 6 }}
+                >
+                  Mật khẩu tạm
+                </div>
+                <input
+                  value={form.password}
+                  onChange={(e) =>
+                    setForm({ ...form, password: e.target.value })
+                  }
+                  placeholder="Từ 8 ký tự"
+                  autoComplete="new-password"
+                  style={{
+                    width: "100%",
+                    height: 38,
+                    borderRadius: 8,
+                    border: `1px solid ${
+                      form.touched && passwordErr
+                        ? "var(--dgr)"
+                        : "var(--line2)"
+                    }`,
+                    background: "var(--panel2)",
+                    color: "var(--tx)",
+                    padding: "0 12px",
+                    fontSize: 13.5,
+                    fontFamily: "'IBM Plex Mono',monospace",
+                  }}
+                />
+                <div
+                  style={{
+                    fontSize: 12,
+                    color:
+                      form.touched && passwordErr
+                        ? "var(--dgr)"
+                        : "var(--faint)",
+                    marginTop: 5,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {form.touched && passwordErr
+                    ? passwordErr
+                    : "Hệ thống không gửi mail — bạn tự chuyển mật khẩu này cho họ. Lần đăng nhập đầu, họ buộc phải đổi."}
+                </div>
+              </div>
+            )}
+
             <div>
               <div
                 style={{ fontSize: 12, color: "var(--dim)", marginBottom: 6 }}
@@ -608,7 +666,7 @@ function AdminUsers() {
             <FormSubmit
               label={form.mode === "create" ? "Tạo user" : "Lưu thay đổi"}
               enabled
-              onClick={saveUser}
+              onClick={() => void saveUser()}
             />
           </FormFoot>
         </FormModal>
@@ -618,7 +676,7 @@ function AdminUsers() {
         <FormModal width={470} onClose={() => setQuotaFor(null)}>
           <FormHead
             title="Sửa quota"
-            sub={`${quotaFor.email} đang dùng ${fmt(quotaFor.used)}.`}
+            sub={`${quotaFor.email} đang dùng ${fmt(quotaFor.used_bytes)}.`}
           />
           <div
             style={{
@@ -652,8 +710,9 @@ function AdminUsers() {
                 textWrap: "pretty",
               }}
             >
-              User đang dùng {fmt(quotaFor.used)}, đặt quota {quotaForm.num}{" "}
-              {quotaForm.unit} sẽ chặn mọi lần ghi mới cho tới khi họ xoá bớt.
+              User đang dùng {fmt(quotaFor.used_bytes)}, đặt quota{" "}
+              {quotaForm.num} {quotaForm.unit} sẽ chặn mọi lần ghi mới cho tới
+              khi họ xoá bớt.
             </div>
           )}
           <FormFoot padding="14px 24px">
@@ -661,16 +720,21 @@ function AdminUsers() {
             <FormSubmit
               label="Lưu quota"
               enabled
-              onClick={() => {
-                // TODO(slice#7): PATCH /api/admin/users/:pid {max_bytes}
-                setUsers(
-                  users.map((u) =>
-                    u.email === quotaFor.email ? { ...u, max: quotaBytes } : u,
-                  ),
-                );
-                setQuotaFor(null);
-                toast("Đã cập nhật quota");
-              }}
+              onClick={() =>
+                void (async () => {
+                  const updated = await run(
+                    () =>
+                      updateUser(quotaFor.pid, {
+                        max_bytes: Math.round(quotaBytes),
+                      }),
+                    { onError: (m) => toast(m, "danger") },
+                  );
+                  setQuotaFor(null);
+                  if (!updated) return;
+                  await router.invalidate();
+                  toast("Đã cập nhật quota");
+                })()
+              }
             />
           </FormFoot>
         </FormModal>
@@ -711,16 +775,18 @@ function AdminUsers() {
             <FormSubmit
               label="Đổi role"
               enabled={!selfDemote}
-              onClick={() => {
-                // TODO(slice#7): PATCH /api/admin/users/:pid {role}
-                setUsers(
-                  users.map((u) =>
-                    u.email === roleFor.email ? { ...u, role: nextRole } : u,
-                  ),
-                );
-                setRoleFor(null);
-                toast("Đã đổi role");
-              }}
+              onClick={() =>
+                void (async () => {
+                  const updated = await run(
+                    () => updateUser(roleFor.pid, { role: nextRole }),
+                    { onError: (m) => toast(m, "danger") },
+                  );
+                  setRoleFor(null);
+                  if (!updated) return;
+                  await router.invalidate();
+                  toast("Đã đổi role");
+                })()
+              }
             />
           </FormFoot>
         </FormModal>

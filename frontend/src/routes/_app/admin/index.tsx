@@ -3,23 +3,57 @@ import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { Header } from "../../../components/Header";
 import { useShell } from "../../../components/shell";
 import { H1, Page, Panel, monoStyle } from "../../../components/ui";
+import { type AdminUser, listUsers } from "../../../lib/admin";
 import { colorFor, fmt } from "../../../lib/format";
-import { ADMIN_STATS, ADMIN_USERS } from "../../../lib/mock";
 
 export const Route = createFileRoute("/_app/admin/")({
-  // UX guard only — the API must enforce this too (slice #7).
+  // UX guard only — AdminCaller is the real gate, on the server.
   beforeLoad: ({ context }) => {
     if (context.user.role !== "admin") throw redirect({ to: "/" });
   },
+  loader: () => listUsers(),
   component: AdminDashboard,
 });
 
+/// Counts the gateway can compute from the accounts alone.
+/// The prototype showed bucket and object totals here; those need an admin-wide aggregate the
+/// API does not expose, so they are left out rather than invented.
+function stats(users: AdminUser[]) {
+  const admins = users.filter((u) => u.role === "admin").length;
+  const pending = users.filter((u) => u.must_change_password).length;
+  const stored = users.reduce((a, u) => a + u.used_bytes, 0);
+  return [
+    {
+      label: "USER",
+      value: String(users.length),
+      sub: `${admins} admin · ${pending} chưa đổi mật khẩu tạm`,
+      color: "var(--tx)",
+    },
+    {
+      label: "DUNG LƯỢNG",
+      value: fmt(stored),
+      sub: "tổng trên mọi tài khoản",
+      color: "var(--tx)",
+    },
+    {
+      label: "QUOTA KHÔNG GIỚI HẠN",
+      value: String(users.filter((u) => u.max_bytes === 0).length),
+      sub: "tài khoản",
+      color: "var(--tx)",
+    },
+  ];
+}
+
 function AdminDashboard() {
   const { user, requestLogout } = useShell();
+  const users: AdminUser[] = Route.useLoaderData();
 
-  const byUsage = [...ADMIN_USERS].sort((a, b) => b.used - a.used);
+  const byUsage = [...users].sort((a, b) => b.used_bytes - a.used_bytes);
   const topUsers = byUsage.slice(0, 5);
-  const nearlyFull = ADMIN_USERS.filter((u) => u.max && u.used / u.max >= 0.9);
+  const nearlyFull = users.filter(
+    (u) => u.max_bytes > 0 && u.used_bytes / u.max_bytes >= 0.9,
+  );
+  const ADMIN_STATS = stats(users);
 
   return (
     <>
@@ -53,7 +87,7 @@ function AdminDashboard() {
           data-grid="astats"
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(5,1fr)",
+            gridTemplateColumns: "repeat(3,1fr)",
             gap: 14,
           }}
         >
@@ -118,12 +152,14 @@ function AdminDashboard() {
             </div>
             <div style={{ padding: "6px 8px" }}>
               {topUsers.map((u) => {
-                const pct = u.max ? Math.min(100, (u.used / u.max) * 100) : 0;
+                const pct = u.max_bytes
+                  ? Math.min(100, (u.used_bytes / u.max_bytes) * 100)
+                  : 0;
                 return (
                   <Link
                     key={u.email}
                     to="/admin/users/$pid"
-                    params={{ pid: u.email }}
+                    params={{ pid: u.pid }}
                     className="rowHover linkPlain"
                     style={{
                       display: "grid",
@@ -147,7 +183,7 @@ function AdminDashboard() {
                     >
                       {u.email}
                     </div>
-                    {u.max ? (
+                    {u.max_bytes ? (
                       <div
                         style={{
                           height: 5,
@@ -183,7 +219,7 @@ function AdminDashboard() {
                         ...monoStyle,
                       }}
                     >
-                      {fmt(u.used)}
+                      {fmt(u.used_bytes)}
                     </div>
                   </Link>
                 );
@@ -219,12 +255,12 @@ function AdminDashboard() {
             </div>
             <div style={{ padding: "6px 8px" }}>
               {nearlyFull.map((u) => {
-                const pct = Math.min(100, (u.used / u.max) * 100);
+                const pct = Math.min(100, (u.used_bytes / u.max_bytes) * 100);
                 return (
                   <Link
                     key={u.email}
                     to="/admin/users/$pid"
-                    params={{ pid: u.email }}
+                    params={{ pid: u.pid }}
                     className="rowHover linkPlain"
                     style={{
                       display: "grid",

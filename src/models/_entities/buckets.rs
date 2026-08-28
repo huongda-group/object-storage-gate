@@ -19,19 +19,24 @@ pub struct Model {
     pub reserved_bytes: i64,
     pub object_count: i64,
     pub user_id: Option<i32>,
-    pub provider: String,
-    pub region: Option<String>,
-    pub api_endpoint: Option<String>,
-    pub access_id: Option<String>,
-    #[sea_orm(column_type = "VarBinary(StringLen::None)", nullable)]
-    pub access_secret_encrypted: Option<Vec<u8>>,
     pub public_enabled: bool,
+    pub pool_id: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::multipart_uploads::Entity")]
+    MultipartUploads,
     #[sea_orm(has_many = "super::objects::Entity")]
     Objects,
+    #[sea_orm(
+        belongs_to = "super::pools::Entity",
+        from = "Column::PoolId",
+        to = "super::pools::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Restrict"
+    )]
+    Pools,
     #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::UserId",
@@ -42,9 +47,21 @@ pub enum Relation {
     Users,
 }
 
+impl Related<super::multipart_uploads::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::MultipartUploads.def()
+    }
+}
+
 impl Related<super::objects::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Objects.def()
+    }
+}
+
+impl Related<super::pools::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Pools.def()
     }
 }
 

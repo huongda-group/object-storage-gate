@@ -4,9 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-This is the **unmodified loco.rs SaaS starter** (loco-rs 0.16) — `User` model + JWT auth, mailers, and a React frontend. **None of the Object Storage Gate domain exists yet.** `FUTURE.md` (Vietnamese) is the product spec and the source of truth for what to build. Read it before designing anything.
+The S3 data plane exists: `SigV4` in both directions, the isolation boundary,
+Get/Head/Put/Delete/DeleteObjects, listing from the database, multipart, copy,
+presigned URLs, and an audit log written through a Redis-backed queue. Verified
+against MinIO with aws-cli. See
+`docs/superpowers/plans/2026-08-17-go-live-roadmap.md` for what is left and in
+what order.
 
-Gap between what's here and the spec: no tenants, access keys, object metadata, quota, audit, S3 API surface, backend-store proxying, prefix mapping, or Redis. Build these; don't assume they exist.
+`FUTURE.md` is the original product spec; the shipped data model supersedes it
+in one way — buckets belong to **users**, not to a separate tenant entity.
+
+Self-registration was removed on 2026-08-17. Accounts come from
+`POST /api/auth/setup` on an empty instance, or from `POST /api/admin/users`.
+There are no mail flows left and `src/mailers/` no longer exists. See
+`docs/superpowers/specs/2026-08-17-go-live-hardening-design.md`.
 
 ## What this becomes
 
@@ -55,12 +66,12 @@ Wiring hub is `src/app.rs` — the `Hooks` impl. Anything new must be registered
 - `truncate()` / `seed()` — per-model, used by tests and `db reset`.
 
 Layout:
-- `src/controllers/` — Axum handlers. **S3 API surface goes here** (Get/Put/Head/Delete/Copy Object, ListObjectsV2, multipart, presigned, HeadBucket). Only `auth.rs` exists today.
+- `src/controllers/` — Axum handlers. **S3 API surface goes here** (Get/Put/Head/Delete/Copy Object, ListObjectsV2, multipart, presigned, HeadBucket). Today: `auth.rs` (setup/login/current), `api.rs` (account + the `RawCaller`/`Caller`/`AdminCaller` extractors), `admin.rs` (user management).
 - `src/models/` — SeaORM logic. `_entities/` is **generated** (`db entities`) — never hand-edit; put business logic in the sibling module (e.g. `models/users.rs` extends `_entities/users.rs`). Quota mutations (`reserve/commit/release`, `reconcile`) belong here, not in controllers.
 - `migration/` — SeaORM migrations (`m2022..._<name>.rs`), each listed in `migration/src/lib.rs`. Only `users` exists.
 - `src/workers/` — background jobs. **Currently `BackgroundAsync` (in-process), not Redis-backed** — `config/*.yaml` `workers.mode`. Spec wants Redis for the queue + distributed locks; that's not wired yet.
 - `src/tasks/` — one-off CLI tasks (reconcile, cleanup, key rotation → these go here or as scheduled).
-- `src/views/`, `src/mailers/` — JSON response shapers + email templates (`.t` Tera).
+- `src/views/` — JSON response shapers. `src/mailers/` was deleted with the mail flows.
 - `config/{development,production,test}.yaml` — Tera-templated (`get_env`). Add backend-store + Redis config here.
 - `frontend/` — React admin UI, built to `frontend/dist`, served static by the server (`server.middlewares.static`).
 
@@ -73,9 +84,18 @@ Layout:
 - **Three first-class backends: Postgres, MySQL (>= 8.0.13), SQLite.** Every new query must run on all three. No `ILIKE`, `RETURNING`, `ON CONFLICT` / `ON DUPLICATE KEY`, `jsonb`, array columns, `pg_advisory_lock`, `SELECT ... FOR UPDATE SKIP LOCKED`. Migrations use `ColType` + `SchemaManager` first; raw SQL only when unavoidable (functional index) and then branched on `m.get_database_backend()` — see `migration/src/m20260724_000002_buckets.rs`.
 - **Quota mutations take no lock.** `reserve`/`commit`/`release` is one `UPDATE ... WHERE <guard>` plus a `rows_affected` check — atomic on all three backends. Advisory locks are Postgres-only and out of bounds.
 - **SQLite has a single writer.** Write paths must tolerate `SQLITE_BUSY`; WAL + `busy_timeout=5000` are already set by `loco_rs::db::connect`, don't re-configure them.
-- **New `TIMESTAMP` columns need explicit precision on MySQL.** MySQL's default `TIMESTAMP` is precision 0 and *rounds* to the second, so expiry math drifts up to half a second (`expires_at` reads later than it was written). `m20260815_000001_mysql_timestamp_precision` only widens columns that existed when it ran — it sits above the `inject-above` marker, so every later migration runs after it. Any new timestamp column must declare `TIMESTAMP(6)` itself on MySQL.
+- **New `TIMESTAMP` columns need explicit precision on MySQL.** MySQL's default `TIMESTAMP` is precision 0 and *rounds* to the second, so expiry math drifts up to half a second (`expires_at` reads later than it was written). `m20260815_000001_mysql_timestamp_precision` only widens columns that existed when it ran — it sits above the `inject-above` marker, so every later migration runs after it. Any migration that adds a table or a timestamp column must call `mysql_timestamps::widen_all(m)` at the end of its own `up` — `create_table` adds `created_at`/`updated_at` too, and those come out at precision 0 as well.
 - **`src/models/_entities/` is generated from Postgres only.** Running `cargo loco db entities` against MySQL or SQLite yields different column types and corrupts the models.
 - **loco has no `bg_mysql`.** Switching `workers.mode` to `BackgroundQueue` forces MySQL deployments onto the Redis queue.
+- **No mail flows.** Email verification, magic link and password reset were removed; `src/mailers/` is gone. Do not add a mail-sending endpoint back without first fixing the production mailer block in `config/production.yaml`, which has no `auth:` section and so cannot be pointed at a real SMTP provider.
+- **A pool holds the upstream credential, not a bucket.** The five store columns moved from `buckets` to `pools`; `buckets.pool_id` is NOT NULL with `ON DELETE RESTRICT`. There is no `user_id IS NULL` system-pool sentinel any more — that sentinel is what turned a deleted owner's private bucket into a shared one, which `m20260817` had to fix.
+- **`pools.access_secret_encrypted` never reaches the API.** `PoolResponse` has no field for it; `is_configured` is all the console needs. `GET /api/pools` (non-admin) returns name and provider only — not even `physical_bucket`, because a tenant learning the real layout is what the gateway exists to prevent.
+- **SQLite has no `pool_id` foreign key.** `MODIFY COLUMN` and `ADD FOREIGN KEY` do not exist there, so the column stays nullable and unconstrained. `buckets::Model::create` looks the pool up itself, which is what makes the three backends behave alike; SQLite is single-node dev/test only.
+- **Redis is required in production, and so is a worker process.** `workers.mode: BackgroundQueue` carries the audit entries, so a MySQL deployment now needs Redis too — loco has no `bg_mysql`. `start` serves HTTP only; a separate `start --worker` is what drains the queue, and without it `audit_logs` stays empty with nothing reporting an error. Dev and test stay in-process: requiring Redis to run `cargo test` would make the suite un-runnable on a fresh checkout.
+- **Audit must never fail a request.** An enqueue error is logged and the response goes out unchanged. Audit is observation, not function — a test drops the table mid-request to prove it.
+- **The rate limiter covers `/api/*` only.** It exists to stop password guessing on login. Applied to the data plane it broke the product: `aws s3 sync` of 1200 objects stopped at the ~999th with a 429. `SigV4` per access key is the data plane's control.
+- **`AdminCaller` is the only server-side admin gate.** The console's `role` check is a UX affordance. Every new `/api/admin/*` route must take `AdminCaller`.
+- **`Caller` refuses a user holding a temporary password.** `RawCaller` skips that check and is used by exactly one endpoint, `POST /api/me/password`. Do not reach for `RawCaller` anywhere else.
 - **Some loco CLI commands are Postgres/SQLite-only:** `db dump`/`dump_schema` (`loco_rs::db::get_tables`) and `reset_autoincrement`. The latter is already handled in `App::seed`; for the former, dump from Postgres or SQLite.
 
 ## Workflow

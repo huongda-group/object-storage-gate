@@ -1,8 +1,8 @@
 // Small shared pieces lifted from the prototypes: quota bars, status pills, copy buttons, page/panel chrome.
 import type React from "react";
 import { useState } from "react";
+import type { UNITS } from "../lib/dashboard";
 import type { PillView, QuotaView } from "../lib/format";
-import type { UNITS } from "../lib/mock";
 import { useToast } from "./Toast";
 
 /**
@@ -417,9 +417,12 @@ export function Copyable({
 
   async function copy() {
     try {
-      await navigator.clipboard?.writeText(value);
+      await navigator.clipboard.writeText(value);
     } catch {
-      // clipboard blocked (insecure origin / denied) — still show the state
+      // Blocked on an insecure origin or by a denied permission: nothing was copied, so
+      // confirming would be a lie.
+      toast("Trình duyệt không cho copy. Chọn và copy thủ công.", "danger");
+      return;
     }
     setCopied(true);
     toast("Đã copy vào clipboard");

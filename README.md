@@ -32,8 +32,10 @@ today.
 | | State |
 |---|---|
 | Data foundation — schema, models, encrypted secrets | **done** (slice #1) |
-| JWT user auth — register, verify, login, forgot/reset, magic link | **done** (loco starter, extended) |
-| Console SPA — every screen; auth, access keys and the API page wired to the real API | **done**; buckets/objects/admin screens still on mocks |
+| JWT user auth — first-run setup, login, forced password change | **done** |
+| Self-registration, email verification, magic link, password reset | **removed** 2026-08-17 — accounts are admin-created |
+| Admin user management API | **done** (P1) |
+| Console SPA — every screen on the real API; no fixture data anywhere | **done** (P4) |
 | S3 conformance test suite | **done**, runs against a real store today |
 | SigV4 verify + user/bucket resolution | slice #2 |
 | Prefix rewrite + backend proxy + S3 verbs | slice #3 |
@@ -41,7 +43,8 @@ today.
 | Versioning, CopyObject, multipart | slice #5 |
 | Audit log + background jobs | slice #6 |
 | Access key REST API + PAT-authenticated account API | **done** (slice #7) |
-| Bucket/object/admin REST API for the console | slice #7, remainder |
+| Bucket + account + admin REST API for the console | **done** (P4) |
+| Object browser and backend-store pool screens | blocked on the S3 slice; both show a status page |
 
 No S3 endpoint is served yet. The gateway exposes the account API under
 `/api/*` and serves `frontend/dist` as static files.
@@ -82,7 +85,7 @@ DB_TYPE=mysql cargo loco start
 DATABASE_URL=mysql://loco:loco@localhost:3306/osg_test cargo test
 ```
 
-Docker Compose keeps the stack (app + valkey) in `docker-compose.yml` and one overlay
+Docker Compose keeps the app in `docker-compose.yml` and one overlay
 per database:
 
 ```sh
@@ -131,7 +134,32 @@ curl -X POST "$OSG_HOST/api/keys" \
 | POST | `/api/keys/{pid}/rotate` | new key with the same policy; old one goes `disabled` |
 | DELETE | `/api/keys/{pid}` | revoke permanently (terminal — no way back) |
 | GET | `/api/buckets` | buckets owned by the account |
+| POST | `/api/buckets` | create — `max_bytes` required, S3 naming rules enforced |
+| GET | `/api/buckets/{pid}` | one bucket |
+| PATCH | `/api/buckets/{pid}` | quota, public flag |
+| DELETE | `/api/buckets/{pid}` | delete — refused while the bucket holds objects |
+| PATCH | `/api/me` | rename yourself; role and quota are an admin's call |
+| GET | `/api/me/summary` | bytes used, bucket count, object count, active keys |
 | GET | `/api/usage` | used / reserved / max bytes, object and bucket counts |
+| POST | `/api/me/password` | replace your own password, including an admin-issued temporary one |
+| POST | `/api/token/rotate` | mint a personal access token — returned **once**, stored hashed |
+| GET | `/api/pools` | pool name and provider only, so a user can pick one when creating a bucket |
+
+Admin-only, all gated by `AdminCaller` on the server:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/admin/users` | every account |
+| POST | `/api/admin/users` | create an account — `max_bytes` is required, no default |
+| GET | `/api/admin/users/{pid}` | one account |
+| PATCH | `/api/admin/users/{pid}` | name, role, quota |
+| POST | `/api/admin/users/{pid}/password` | issue a new temporary password |
+| DELETE | `/api/admin/users/{pid}` | remove an account |
+| GET | `/api/admin/pools` | every pool |
+| POST | `/api/admin/pools` | create a pool |
+| GET | `/api/admin/pools/{pid}` | one pool |
+| PATCH | `/api/admin/pools/{pid}` | config; a blank secret keeps the stored one |
+| DELETE | `/api/admin/pools/{pid}` | refused while any bucket uses it |
 
 A key belonging to another account returns `404`, not `403`. Permissions are limited
 to `read`, `write`, `delete`, `list`, `multipart`, `presigned`; prefixes may not
@@ -142,16 +170,42 @@ be absolute or contain `..`.
 | Table | Holds |
 |---|---|
 | `users` | account + `role` (`user` \| `admin`) + total quota (`max_bytes`, `used_bytes`, `reserved_bytes`); `0` bytes means unlimited |
-| `buckets` | a logical bucket. `user_id` NULL = **system pool**, gateway-wide and outside every user's quota. Per-bucket quota counters and `object_count`. Name unique per owner (`UNIQUE (COALESCE(user_id,0), name)`) |
-| `buckets` (store columns) | which object store this bucket proxies to: `provider`, `region`, `api_endpoint`, `access_id`, `access_secret_encrypted`, `public_enabled` |
+| `pools` | an upstream object store plus the physical bucket inside it: `name`, `provider`, `region`, `api_endpoint`, `physical_bucket`, `access_id`, `access_secret_encrypted`. A client can never address a pool, and the API never returns the secret |
+| `buckets` | a logical bucket. `pool_id` NOT NULL (`ON DELETE RESTRICT`) names the pool it proxies to. Per-bucket quota counters and `object_count`. Name unique per owner (`UNIQUE (COALESCE(user_id,0), name)`) |
 | `access_keys` | client credentials — `OSG…` id, AES-GCM encrypted secret, `label` (primary / backup / temp / CI / read-only), `status` (`active` \| `disabled` \| `revoked`), optional `expires_at`. A user holds many; rotate one without touching the others |
 | `access_key_permissions` | per-key actions: `read`, `write`, `delete`, `list`, `multipart`, `presigned` |
 | `access_key_prefixes` | per-key prefix confinement — the "one key, one folder" rule |
 | `objects` | metadata per `(bucket_id, object_key)`: `size`, `etag`, `content_type`, timestamps. Quota reads from here, never from scanning the bucket |
 
+### Quota
+
+Every write is reserve → write → commit, and releases the reservation if the
+write fails. Each step is a single `UPDATE ... WHERE <guard>` plus a
+`rows_affected` check — atomic on all three backends, and the reason no lock
+appears in `src/models/quota.rs`. Two levels are charged: the bucket and, when
+it has an owner, the account. `max_bytes = 0` means unlimited at either level.
+
+An overwrite charges the difference: growing an object reserves only the extra
+bytes, shrinking one gives bytes back.
+
+The counters are an optimisation; the `objects` rows are the truth. A process
+that dies between reserve and commit leaves a hold nothing releases, so run the
+reconcile pass on a schedule, off-peak:
+
+```sh
+cargo loco task reconcile_quota
+```
+
+It clears `reserved_bytes` outright, so an upload in flight loses its hold — its
+commit re-adds the bytes, but the window is briefly permissive.
+
 Two credential systems, deliberately separate:
 
-- **JWT** authenticates humans in the console (`/api/auth/*`).
+- **JWT** authenticates humans in the console (`/api/auth/*`). There is no
+  self-registration: the first account comes from `POST /api/auth/setup` on an
+  empty instance, and every later one from `POST /api/admin/users`. A newly
+  created account carries a temporary password and cannot use any endpoint but
+  `POST /api/me/password` until it replaces it.
 - **SigV4 access keys** authenticate S3 clients. The gateway verifies the
   client's `OSG…` key, then re-signs upstream with the bucket's own store
   credentials. Client keys never reach the object store.
@@ -159,8 +213,37 @@ Two credential systems, deliberately separate:
 Both secret kinds are stored AES-256-GCM encrypted (`src/models/crypto.rs`),
 reversible because the gateway has to sign with them.
 
+The personal access token is the exception: it is stored as an Argon2 hash, not
+encrypted, because nothing ever needs to read it back. The token carries a
+plaintext prefix (`osg_pat_<prefix>_<secret>`) that the lookup queries; the hash
+then verifies the whole token. There is no read endpoint — a token not copied at
+rotation is gone.
+
 **Production must set `OSG_MASTER_KEY`** to a base64-encoded 32-byte key.
-Without it the code falls back to a hard-coded development key.
+`App::after_context` refuses to boot production when it is missing, malformed,
+or equal to the development key checked into this repository — CLI subcommands
+included.
+
+### Rotating `OSG_MASTER_KEY`
+
+Every access-key secret and every backend-store credential is encrypted with
+this key. The stored envelope is `version || nonce || ciphertext || tag`, and
+decryption falls back to a previous key, so a rotation is three steps:
+
+1. Set `OSG_MASTER_KEY_PREVIOUS` to the current key and `OSG_MASTER_KEY` to the
+   new one. Deploy. New writes use the new key; old rows still decrypt.
+2. Re-encrypt every stored secret under the new key.
+3. Unset `OSG_MASTER_KEY_PREVIOUS`. Deploy.
+
+Step 2 has no task yet — `src/tasks/` is where it belongs. The two-key read path
+exists so that a rotation cannot destroy data in the meantime, which is the part
+that used to be impossible.
+
+Generate a key with `openssl rand -base64 32`.
+
+`JWT_SECRET` must also be base64 — loco signs with
+`EncodingKey::from_base64_secret`, so a non-base64 value boots fine and then
+fails every login with a generic "unauthorized!". Boot refuses it in production.
 
 ## Layout
 

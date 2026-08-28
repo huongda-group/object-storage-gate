@@ -1,0 +1,14 @@
+---
+- id: 1
+  pid: 33333333-3333-3333-3333-333333333333
+  name: main
+  provider: minio
+  region: ap-southeast-1
+  api_endpoint: "http://localhost:9000"
+  physical_bucket: osg-main
+  access_id: FIXTUREUPSTREAMID
+  # AES-GCM of a plaintext secret is nondeterministic, so the fixture leaves it null.
+  # Tests that need a signable pool call pools::Model::create instead of relying on the fixture.
+  access_secret_encrypted: null
+  created_at: "2023-11-12T12:34:56.789Z"
+  updated_at: "2023-11-12T12:34:56.789Z"

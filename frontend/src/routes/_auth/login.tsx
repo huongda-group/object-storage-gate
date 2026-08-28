@@ -1,4 +1,4 @@
-import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import {
   ErrorBanner,
@@ -78,14 +78,6 @@ function Login() {
             setErr("");
           }}
           onEnter={submit}
-          right={
-            <Link
-              to="/forgot"
-              style={{ fontSize: 12, color: "var(--acc)", fontWeight: 500 }}
-            >
-              Quên mật khẩu?
-            </Link>
-          }
         />
 
         <div
@@ -136,7 +128,8 @@ function Login() {
           color: "var(--dim)",
         }}
       >
-        Chưa có tài khoản? <Link to="/register">Yêu cầu cấp quyền</Link>
+        Tài khoản do quản trị viên cấp. Liên hệ quản trị viên nếu bạn quên mật
+        khẩu.
       </div>
     </div>
   );

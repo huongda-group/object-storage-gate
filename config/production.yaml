@@ -8,10 +8,28 @@ logger:
 server:
   port: {{ get_env(name="PORT", default="5150") }}
   binding: 0.0.0.0
-  host: {{ get_env(name="SERVER_HOST", default="http://localhost") }}
+  # No default on purpose: a forgotten SERVER_HOST should fail the boot, the way a
+  # forgotten DATABASE_URL already does, instead of quietly building every link against
+  # http://localhost.
+  host: {{ get_env(name="SERVER_HOST") }}
   middlewares:
     fallback:
       enable: false
+    # loco defaults this to 2 MB. An object-storage gateway must accept multi-gigabyte
+    # uploads, and S3 multipart parts have a 5 MB minimum, so a framework-wide cap is the
+    # wrong place to enforce anything. The real per-route cap belongs in the S3 handler.
+    limit_payload:
+      body_limit: disable
+    # Generous on purpose: a 5 GiB upload over a slow link is a legitimate request.
+    timeout_request:
+      enable: true
+      timeout: 300000
+    # `enable` is required: the preset alone is inert, because loco's is_enabled() reads
+    # only this flag. The console keeps its JWT in localStorage, so a CSP is what limits the
+    # damage of an XSS there.
+    secure_headers:
+      enable: true
+      preset: github
     static:
       enable: true
       must_exist: true
@@ -22,25 +40,40 @@ server:
       fallback: "frontend/dist/index.html"
 
 workers:
-  mode: BackgroundAsync
+  # BackgroundQueue, not BackgroundAsync: an in-process queue loses every audit entry queued at the
+  # moment of a restart, and a missing audit trail on a multi-tenant gateway is a compliance
+  # problem rather than a performance one.
+  mode: BackgroundQueue
 
-mailer:
-  smtp:
-    enable: {{ get_env(name="SMTP_ENABLE", default="false") }}
-    host: {{ get_env(name="SMTP_HOST", default="localhost") }}
-    port: {{ get_env(name="SMTP_PORT", default="587") }}
-    secure: {{ get_env(name="SMTP_SECURE", default="true") }}
+queue:
+  kind: Redis
+  uri: "{{ get_env(name="REDIS_URL") }}"
+  dangerously_flush: false
+
+# No mailer block: P1 removed every mail-based auth flow and deleted src/mailers, so
+# ctx.mailer is None and nothing asks for it. A slice that brings mail back has to add this
+# block deliberately — including the `auth:` section it never had, without which SES,
+# SendGrid and Mailgun cannot be configured at all.
 
 database:
   # Bắt buộc. Scheme trong URI (postgres:// | mysql:// | sqlite://) quyết định backend.
   # MySQL yêu cầu >= 8.0.13. SQLite chỉ hợp deploy một node (một writer duy nhất).
-  uri: {{ get_env(name="DATABASE_URL") }}
+  # Quoted: a URI like sqlite::memory: ends in a colon, which unquoted is not valid YAML.
+  uri: "{{ get_env(name="DATABASE_URL") }}"
   enable_logging: false
-  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="500") }}
-  idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="500") }}
-  min_connections: {{ get_env(name="DB_MIN_CONNECTIONS", default="1") }}
-  max_connections: {{ get_env(name="DB_MAX_CONNECTIONS", default="10") }}
-  auto_migrate: true
+  # 5s, not the starter's 500ms: a TLS connect to a managed database across an AZ routinely
+  # overruns half a second, and the boot then panics with PoolTimedOut. config/test.yaml
+  # already carried this fix and the same note; production never got it.
+  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="5000") }}
+  # 5 minutes, not 500ms: at half a second sqlx closes a connection almost as soon as it
+  # goes idle, so bursty traffic pays a full TCP+TLS+auth handshake per request.
+  idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="300000") }}
+  min_connections: {{ get_env(name="DB_MIN_CONNECTIONS", default="2") }}
+  max_connections: {{ get_env(name="DB_MAX_CONNECTIONS", default="25") }}
+  # Migrations run as a separate pre-deploy step. Several replicas booting at once would
+  # otherwise race Migrator::up, and on MySQL a half-applied migration wedges the schema
+  # with no documented recovery.
+  auto_migrate: false
   dangerously_truncate: false
   dangerously_recreate: false
 

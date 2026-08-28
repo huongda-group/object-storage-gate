@@ -1,6 +1,6 @@
 // Ported from console-object-storage-gate/project/Buckets.dc.html.
 // TODO(slice#7): the prototype's loading skeleton (lines 63-77) and quota-error banner need GET /api/buckets to drive them.
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { Header } from "../../../components/Header";
 import {
@@ -32,17 +32,36 @@ import {
   monoStyle,
   useRowMenu,
 } from "../../../components/ui";
+import { run } from "../../../lib/api-client";
 import { validateBucketName } from "../../../lib/bucket-name";
+import {
+  type Bucket,
+  createBucket as apiCreateBucket,
+  deleteBucket as apiDeleteBucket,
+  listBuckets,
+} from "../../../lib/buckets";
+import { UNITS } from "../../../lib/dashboard";
 import { fmt, grp, quotaView } from "../../../lib/format";
-import { BUCKETS, type Bucket, UNITS } from "../../../lib/mock";
+import { type PoolChoice, listPoolChoices } from "../../../lib/pools";
 
-export const Route = createFileRoute("/_app/buckets/")({ component: Buckets });
+export const Route = createFileRoute("/_app/buckets/")({
+  // A bucket cannot be created without a pool, so the form needs both lists before it renders.
+  loader: async () => {
+    const [buckets, pools] = await Promise.all([
+      listBuckets(),
+      listPoolChoices(),
+    ]);
+    return { buckets, pools };
+  },
+  component: Buckets,
+});
 
 type NewBucket = {
   name: string;
   num: string;
   unit: keyof typeof UNITS;
   unlimited: boolean;
+  poolPid: string;
 };
 
 const EMPTY_FORM: NewBucket = {
@@ -50,6 +69,7 @@ const EMPTY_FORM: NewBucket = {
   num: "50",
   unit: "GiB",
   unlimited: false,
+  poolPid: "",
 };
 
 function Buckets() {
@@ -57,10 +77,20 @@ function Buckets() {
   const toast = useToast();
   const menu = useRowMenu();
 
-  const [buckets, setBuckets] = useState<Bucket[]>(BUCKETS);
+  const router = useRouter();
+  const { buckets, pools }: { buckets: Bucket[]; pools: PoolChoice[] } =
+    Route.useLoaderData();
+  const canCreate = pools.length > 0;
+
+  // One pool means there is nothing to choose; preselect it and leave the select out.
+  const newForm = (): NewBucket => ({
+    ...EMPTY_FORM,
+    poolPid: pools.length === 1 ? pools[0].pid : "",
+  });
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<NewBucket | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Bucket | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const rows = query
     ? buckets.filter((b) =>
@@ -68,7 +98,7 @@ function Buckets() {
       )
     : buckets;
 
-  const totalUsed = buckets.reduce((a, b) => a + b.used, 0);
+  const totalUsed = buckets.reduce((a, b) => a + b.used_bytes, 0);
   const nameError = form
     ? validateBucketName(
         form.name,
@@ -76,33 +106,35 @@ function Buckets() {
       )
     : "";
   const nameValid = !!form && form.name.length > 0 && !nameError;
+  const formValid = nameValid && !!form?.poolPid;
 
-  function createBucket() {
-    if (!form || !nameValid) return;
+  async function createBucket() {
+    if (!form || !formValid || busy) return;
+    setBusy(true);
     const max = form.unlimited
       ? 0
-      : Number.parseFloat(form.num || "0") * UNITS[form.unit];
-    // TODO(slice#7): POST /api/buckets {name, max_bytes}
-    setBuckets([
-      ...buckets,
-      {
-        name: form.name,
-        used: 0,
-        max,
-        res: 0,
-        objects: 0,
-        created: "vừa xong",
-        full: "vừa xong",
-      },
-    ]);
+      : Math.round(Number.parseFloat(form.num || "0") * UNITS[form.unit]);
+    const created = await run(
+      () => apiCreateBucket(form.name, max, form.poolPid),
+      { onError: (m) => toast(m, "danger") },
+    );
+    setBusy(false);
+    if (!created) return;
     setForm(null);
-    toast(`Đã tạo bucket ${form.name}`);
+    await router.invalidate();
+    toast(`Đã tạo bucket ${created.name}`);
   }
 
-  function deleteBucket(name: string) {
-    // TODO(slice#7): DELETE /api/buckets/:pid
-    setBuckets(buckets.filter((b) => b.name !== name));
+  async function deleteBucket(pid: string, name: string) {
+    if (busy) return;
+    setBusy(true);
+    const ok = await run(() => apiDeleteBucket(pid), {
+      onError: (m) => toast(m, "danger"),
+    });
+    setBusy(false);
     setDeleting(null);
+    if (ok === undefined) return;
+    await router.invalidate();
     toast(`Đã xoá bucket ${name}`, "danger");
   }
 
@@ -139,10 +171,21 @@ function Buckets() {
               {rows.length} bucket · {fmt(totalUsed)} tổng dung lượng
             </div>
           </div>
-          <PageAction
-            label="Tạo bucket"
-            onClick={() => setForm({ ...EMPTY_FORM })}
-          />
+          {canCreate ? (
+            <PageAction label="Tạo bucket" onClick={() => setForm(newForm())} />
+          ) : (
+            <div
+              style={{
+                fontSize: 12.5,
+                color: "var(--dim)",
+                textAlign: "right",
+                maxWidth: 280,
+                lineHeight: 1.5,
+              }}
+            >
+              Chưa có pool nào. Liên hệ quản trị viên trước khi tạo bucket.
+            </div>
+          )}
         </div>
 
         <TableWrap>
@@ -151,10 +194,12 @@ function Buckets() {
               title="Chưa có bucket nào"
               text="Tạo bucket đầu tiên để bắt đầu đẩy object qua gateway."
               action={
-                <PageAction
-                  label="Tạo bucket"
-                  onClick={() => setForm({ ...EMPTY_FORM })}
-                />
+                canCreate ? (
+                  <PageAction
+                    label="Tạo bucket"
+                    onClick={() => setForm(newForm())}
+                  />
+                ) : undefined
               }
             />
           ) : (
@@ -176,7 +221,11 @@ function Buckets() {
                 </thead>
                 <tbody>
                   {rows.map((b) => {
-                    const q = quotaView(b.used, b.max, b.res);
+                    const q = quotaView(
+                      b.used_bytes,
+                      b.max_bytes,
+                      b.reserved_bytes,
+                    );
                     const id = `b-${b.name}`;
                     return (
                       <tr
@@ -186,8 +235,8 @@ function Buckets() {
                       >
                         <Td>
                           <Link
-                            to="/buckets/$name"
-                            params={{ name: b.name }}
+                            to="/buckets/$pid"
+                            params={{ pid: b.pid }}
                             style={{
                               ...monoStyle,
                               fontSize: "var(--fs)",
@@ -224,7 +273,7 @@ function Buckets() {
                               }}
                             >
                               {q.unlimited
-                                ? `${fmt(b.used)} đã dùng · ∞`
+                                ? `${fmt(b.used_bytes)} đã dùng · ∞`
                                 : q.usedLine}
                             </div>
                           </div>
@@ -237,13 +286,13 @@ function Buckets() {
                             color: "var(--dim)",
                           }}
                         >
-                          {grp(b.objects)}
+                          {grp(b.object_count)}
                         </Td>
                         <Td
-                          title={b.full}
+                          title={new Date(b.created_at).toLocaleString("vi-VN")}
                           style={{ fontSize: 13, color: "var(--dim)" }}
                         >
-                          {b.created}
+                          {new Date(b.created_at).toLocaleDateString("vi-VN")}
                         </Td>
                         <Td
                           align="center"
@@ -255,8 +304,8 @@ function Buckets() {
                           {menu.open === id && (
                             <RowMenu pos={menu.pos}>
                               <Link
-                                to="/buckets/$name"
-                                params={{ name: b.name }}
+                                to="/buckets/$pid"
+                                params={{ pid: b.pid }}
                                 className="menuItem"
                                 style={menuItemStyle}
                                 onClick={menu.close}
@@ -264,8 +313,8 @@ function Buckets() {
                                 Mở object browser
                               </Link>
                               <Link
-                                to="/buckets/$name/settings"
-                                params={{ name: b.name }}
+                                to="/buckets/$pid/settings"
+                                params={{ pid: b.pid }}
                                 className="menuItem"
                                 style={menuItemStyle}
                                 onClick={menu.close}
@@ -281,7 +330,7 @@ function Buckets() {
                                 }}
                                 onClick={() => {
                                   menu.close();
-                                  setDeleting(b.name);
+                                  setDeleting(b);
                                 }}
                               >
                                 Xoá bucket
@@ -353,6 +402,44 @@ function Buckets() {
               </div>
             )}
 
+            {pools.length > 1 && (
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: "var(--dim)",
+                    marginBottom: 7,
+                  }}
+                >
+                  Pool
+                </div>
+                <select
+                  value={form.poolPid}
+                  onChange={(e) =>
+                    setForm({ ...form, poolPid: e.target.value })
+                  }
+                  style={{
+                    width: "100%",
+                    height: 38,
+                    borderRadius: 8,
+                    border: "1px solid var(--line2)",
+                    background: "var(--panel2)",
+                    color: "var(--tx)",
+                    padding: "0 10px",
+                    fontSize: 13.5,
+                  }}
+                >
+                  <option value="">Chọn pool…</option>
+                  {pools.map((p) => (
+                    <option key={p.pid} value={p.pid}>
+                      {p.name} ({p.provider})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
               <div
                 style={{
@@ -378,7 +465,7 @@ function Buckets() {
             <FormCancel onClick={() => setForm(null)} />
             <FormSubmit
               label="Tạo bucket"
-              enabled={nameValid}
+              enabled={formValid}
               onClick={createBucket}
             />
           </FormFoot>
@@ -387,12 +474,12 @@ function Buckets() {
 
       {deleting && (
         <ConfirmDangerModal
-          title={`Xoá bucket ${deleting}`}
-          body="Hành động này xoá cascade toàn bộ metadata object trong bucket. Không hoàn tác được."
-          target={deleting}
+          title={`Xoá bucket ${deleting.name}`}
+          body="Chỉ xoá được bucket rỗng: server từ chối nếu còn object, vì metadata mồ côi sẽ không khớp với store thật."
+          target={deleting.name}
           confirmLabel="Xoá bucket"
           onClose={() => setDeleting(null)}
-          onConfirm={() => deleteBucket(deleting)}
+          onConfirm={() => void deleteBucket(deleting.pid, deleting.name)}
         />
       )}
     </>

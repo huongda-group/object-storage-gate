@@ -1,10 +1,7 @@
-// Ported from console-object-storage-gate/project/Admin Buckets.dc.html.
-// The prototype's pool form has no owner picker (the logic's OWNERS list is unused there), so this port follows the rendered form: name, quota, provider, public link.
-import { Link, createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { Header } from "../../../components/Header";
 import {
-  ConfirmDangerModal,
   FormBody,
   FormCancel,
   FormFoot,
@@ -16,10 +13,7 @@ import { useToast } from "../../../components/Toast";
 import { useShell } from "../../../components/shell";
 import {
   H1,
-  HeaderSearch,
   Page,
-  PageAction,
-  QuotaFields,
   RowMenu,
   RowMenuButton,
   TableWrap,
@@ -29,59 +23,54 @@ import {
   monoStyle,
   useRowMenu,
 } from "../../../components/ui";
-import { validateBucketName } from "../../../lib/bucket-name";
-import { colorFor, fmt, grp } from "../../../lib/format";
+import { run } from "../../../lib/api-client";
 import {
-  POOL_BUCKETS,
   PROVIDERS,
-  type PoolBucket,
-  UNITS,
-} from "../../../lib/mock";
+  type Pool,
+  type Provider,
+  createPool,
+  deletePool,
+  listPools,
+  updatePool,
+} from "../../../lib/pools";
 
 export const Route = createFileRoute("/_app/admin/buckets")({
+  // UX guard only — AdminCaller is the real gate, on the server.
   beforeLoad: ({ context }) => {
     if (context.user.role !== "admin") throw redirect({ to: "/" });
   },
-  component: AdminBuckets,
+  loader: () => listPools(),
+  component: AdminPools,
 });
 
 type PoolForm = {
-  editing: string | null;
+  mode: "create" | "edit";
+  pid: string | null;
   name: string;
-  num: string;
-  unit: keyof typeof UNITS;
-  unlimited: boolean;
-  provider: string;
+  provider: Provider;
   region: string;
-  apiEndpoint: string;
-  accessId: string;
-  accessSecret: string;
-  publicEnabled: boolean;
+  api_endpoint: string;
+  physical_bucket: string;
+  access_id: string;
+  access_secret: string;
+  touched: boolean;
 };
 
-const EMPTY_FORM: PoolForm = {
-  editing: null,
+const NEW_POOL: PoolForm = {
+  mode: "create",
+  pid: null,
   name: "",
-  num: "50",
-  unit: "GiB",
-  unlimited: false,
-  provider: "internal",
+  provider: "aws",
   region: "",
-  apiEndpoint: "",
-  accessId: "",
-  accessSecret: "",
-  publicEnabled: false,
+  api_endpoint: "",
+  physical_bucket: "",
+  access_id: "",
+  access_secret: "",
+  touched: false,
 };
 
-const fieldCol = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 6,
-  fontSize: 12,
-  color: "var(--dim)",
-} as const;
-
-const fieldInput = {
+const field = {
+  width: "100%",
   height: 38,
   borderRadius: 8,
   border: "1px solid var(--line2)",
@@ -89,101 +78,82 @@ const fieldInput = {
   color: "var(--tx)",
   padding: "0 12px",
   fontSize: 13.5,
-  fontFamily: "'IBM Plex Mono',monospace",
 } as const;
 
-const statCard = {
-  background: "var(--panel)",
-  border: "1px solid var(--line)",
-  borderRadius: 12,
-  padding: "16px 18px",
+const label = { fontSize: 12, color: "var(--dim)", marginBottom: 6 } as const;
+
+const hint = {
+  fontSize: 12,
+  color: "var(--faint)",
+  marginTop: 5,
+  lineHeight: 1.5,
 } as const;
 
-function AdminBuckets() {
+function AdminPools() {
   const { user, requestLogout } = useShell();
   const toast = useToast();
   const menu = useRowMenu();
+  const router = useRouter();
 
-  const [pools, setPools] = useState<PoolBucket[]>(POOL_BUCKETS);
-  const [query, setQuery] = useState("");
+  const pools: Pool[] = Route.useLoaderData();
+  const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<PoolForm | null>(null);
-  const [secretVisible, setSecretVisible] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Pool | null>(null);
 
-  const rows = query
-    ? pools.filter((b) =>
-        `${b.name} ${b.owner ?? "he thong"}`
-          .toLowerCase()
-          .includes(query.toLowerCase()),
-      )
-    : pools;
+  const nameTrim = form?.name.trim() ?? "";
+  const nameDup =
+    form?.mode === "create" && pools.some((p) => p.name === nameTrim);
+  const nameErr = !nameTrim
+    ? "Tên pool không được để trống."
+    : nameDup
+      ? "Tên pool đã tồn tại."
+      : "";
+  const bucketErr = form?.physical_bucket.trim()
+    ? ""
+    : "Physical bucket không được để trống.";
+  const formValid = !nameErr && !bucketErr;
 
-  const totalSize = pools.reduce((a, b) => a + b.used, 0);
-  const totalObjects = pools.reduce((a, b) => a + b.objects, 0);
-  const grantedQuota = pools
-    .filter((b) => b.max)
-    .reduce((a, b) => a + b.max, 0);
-  const systemPools = pools.filter((b) => !b.owner).length;
-  const owners = new Set(pools.filter((b) => b.owner).map((b) => b.owner)).size;
-
-  const isEdit = !!form?.editing;
-  const nameError = form
-    ? validateBucketName(
-        form.name,
-        isEdit ? [] : pools.map((b) => b.name),
-      ).replace("Bucket", "Pool")
-    : "";
-  const nameValid = !!form && form.name.length > 0 && !nameError;
-
-  const publicLink = `https://public.osgate.vn/${form?.name || "(tên-bucket)"}`;
-
-  function submit() {
-    if (!form || !nameValid) return;
-    const max = form.unlimited
-      ? 0
-      : Number.parseFloat(form.num || "0") * UNITS[form.unit];
-    if (form.editing) {
-      // TODO(slice#7): PATCH /api/admin/pools/:name
-      setPools(
-        pools.map((b) =>
-          b.name === form.editing
-            ? {
-                ...b,
-                max,
-                provider: form.provider,
-                region: form.region,
-                apiEndpoint: form.apiEndpoint,
-                accessId: form.accessId,
-                accessSecret: form.accessSecret,
-                publicEnabled: form.publicEnabled,
-              }
-            : b,
-        ),
-      );
-      toast(`Đã lưu thay đổi cho ${form.name}`);
-    } else {
-      // TODO(slice#7): POST /api/admin/pools
-      setPools([
-        ...pools,
-        {
-          name: form.name,
-          owner: null,
-          used: 0,
-          max,
-          objects: 0,
-          created: "vừa xong",
-          full: "vừa xong",
-          provider: form.provider,
-          region: form.region,
-          apiEndpoint: form.apiEndpoint,
-          accessId: form.accessId,
-          accessSecret: form.accessSecret,
-          publicEnabled: form.publicEnabled,
-        },
-      ]);
-      toast(`Đã tạo pool ${form.name}`);
+  async function savePool() {
+    if (!form || busy) return;
+    if (!formValid) {
+      setForm({ ...form, touched: true });
+      return;
     }
+    setBusy(true);
+
+    const saved =
+      form.mode === "create"
+        ? await run(
+            () =>
+              createPool({
+                name: nameTrim,
+                provider: form.provider,
+                region: form.region.trim() || undefined,
+                api_endpoint: form.api_endpoint.trim() || undefined,
+                physical_bucket: form.physical_bucket.trim(),
+                access_id: form.access_id.trim() || undefined,
+                access_secret: form.access_secret || undefined,
+              }),
+            { onError: (m) => toast(m, "danger") },
+          )
+        : await run(
+            () =>
+              // updatePool drops blank fields: an empty secret means unchanged, never erase.
+              updatePool(form.pid ?? "", {
+                region: form.region.trim(),
+                api_endpoint: form.api_endpoint.trim(),
+                physical_bucket: form.physical_bucket.trim(),
+                access_id: form.access_id.trim(),
+                access_secret: form.access_secret,
+              }),
+            { onError: (m) => toast(m, "danger") },
+          );
+
+    setBusy(false);
+    if (!saved) return;
     setForm(null);
+    await router.invalidate();
+    toast(form.mode === "create" ? "Đã tạo pool" : "Đã cập nhật pool");
   }
 
   return (
@@ -192,78 +162,43 @@ function AdminBuckets() {
         user={user}
         onLogout={requestLogout}
         left={
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Link to="/admin" style={{ fontSize: 13, color: "var(--dim)" }}>
-              Admin
-            </Link>
-            <span style={{ color: "var(--faint)", fontSize: 12 }}>/</span>
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--tx)" }}>
-              Pool
-            </span>
+          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--tx)" }}>
+            Pool
           </div>
         }
-        right={
-          <HeaderSearch
-            value={query}
-            onChange={setQuery}
-            placeholder="Tìm pool hoặc chủ sở hữu…"
-          />
-        }
       />
-      <Page maxWidth={1440}>
+      <Page>
         <div
           style={{
             display: "flex",
             alignItems: "flex-end",
             justifyContent: "space-between",
-            marginBottom: 18,
+            marginBottom: 16,
           }}
         >
           <div>
             <H1>Pool</H1>
             <div style={{ fontSize: 13, color: "var(--dim)", marginTop: 5 }}>
-              Toàn bộ pool trên gateway · nơi tạo pool tổng không gắn với quota
-              user
+              {pools.length} pool — mỗi bucket của user trỏ tới đúng một pool
             </div>
           </div>
-          <PageAction
-            label="Tạo pool"
-            onClick={() => {
-              setSecretVisible(false);
-              setForm({ ...EMPTY_FORM });
+          <button
+            type="button"
+            onClick={() => setForm({ ...NEW_POOL })}
+            style={{
+              height: 34,
+              padding: "0 16px",
+              border: 0,
+              background: "var(--acc)",
+              color: "var(--accTx)",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
             }}
-          />
-        </div>
-
-        <div
-          data-grid="pstats"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3,1fr)",
-            gap: 14,
-            marginBottom: 18,
-          }}
-        >
-          <div style={statCard}>
-            <div style={statLabel}>TỔNG POOL</div>
-            <div style={statValue}>{grp(pools.length)}</div>
-            <div style={statSub}>
-              {owners} chủ sở hữu ·{" "}
-              {systemPools > 0
-                ? `${systemPools} pool hệ thống`
-                : "không có pool hệ thống"}
-            </div>
-          </div>
-          <div style={statCard}>
-            <div style={statLabel}>TỔNG DUNG LƯỢNG</div>
-            <div style={statValue}>{fmt(totalSize)}</div>
-            <div style={statSub}>{fmt(grantedQuota)} quota đã cấp</div>
-          </div>
-          <div style={statCard}>
-            <div style={statLabel}>TỔNG FILE</div>
-            <div style={statValue}>{grp(totalObjects)}</div>
-            <div style={statSub}>metadata rows trên mọi pool</div>
-          </div>
+          >
+            + Tạo pool
+          </button>
         </div>
 
         <TableWrap>
@@ -274,528 +209,298 @@ function AdminBuckets() {
             <thead>
               <tr>
                 <Th>TÊN</Th>
-                <Th>DUNG LƯỢNG</Th>
-                <Th align="right">FILE</Th>
-                <Th>TẠO LÚC</Th>
+                <Th width={110}>PROVIDER</Th>
+                <Th width={190}>PHYSICAL BUCKET</Th>
+                <Th>ENDPOINT</Th>
+                <Th width={190}>CREDENTIAL</Th>
                 <Th width={56} />
               </tr>
             </thead>
             <tbody>
-              {rows.map((b) => {
-                const pct = b.max ? Math.min(100, (b.used / b.max) * 100) : 0;
-                const id = `p-${b.name}`;
-                return (
-                  <tr
-                    key={b.name}
-                    className="trHover"
-                    style={{ borderBottom: "1px solid var(--line)" }}
-                  >
-                    <Td>
-                      <Link
-                        to="/buckets/$name"
-                        params={{ name: b.name }}
-                        style={{
-                          ...monoStyle,
-                          fontSize: "var(--fs)",
-                          color: "var(--acc)",
-                          fontWeight: 500,
-                        }}
-                      >
-                        {b.name}
-                      </Link>
-                      <div
-                        style={{
-                          fontSize: 11.5,
-                          color: "var(--faint)",
-                          marginTop: 3,
-                        }}
-                      >
-                        {b.owner ?? "hệ thống"}
-                      </div>
-                    </Td>
-                    <Td>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 12,
-                        }}
-                      >
-                        {b.max ? (
-                          <div
-                            style={{
-                              flex: 1,
-                              height: 5,
-                              borderRadius: 3,
-                              background: "var(--line)",
-                              overflow: "hidden",
-                              display: "flex",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: `${pct.toFixed(1)}%`,
-                                background: colorFor(pct),
-                              }}
-                            />
-                          </div>
-                        ) : (
-                          <div
-                            style={{
-                              flex: 1,
-                              fontSize: 11,
-                              color: "var(--acc)",
-                              ...monoStyle,
-                            }}
-                          >
-                            ∞ Không giới hạn
-                          </div>
-                        )}
-                        <div
-                          style={{
-                            width: 150,
-                            fontSize: 12.5,
-                            color: "var(--dim)",
-                            ...monoStyle,
-                            textAlign: "right",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {b.max
-                            ? `${fmt(b.used)} / ${fmt(b.max)}`
-                            : `${fmt(b.used)} · ∞`}
-                        </div>
-                      </div>
-                    </Td>
-                    <Td
-                      align="right"
-                      style={{
-                        ...monoStyle,
-                        fontSize: 13,
-                        color: "var(--dim)",
-                      }}
-                    >
-                      {grp(b.objects)}
-                    </Td>
-                    <Td
-                      title={b.full}
-                      style={{ fontSize: 13, color: "var(--dim)" }}
-                    >
-                      {b.created}
-                    </Td>
-                    <Td
-                      align="center"
-                      style={{ padding: "0 8px", position: "relative" }}
-                    >
-                      <RowMenuButton onClick={(e) => menu.toggle(id, e, 126)} />
-                      {menu.open === id && (
-                        <RowMenu pos={menu.pos}>
-                          <Link
-                            to="/buckets/$name"
-                            params={{ name: b.name }}
-                            className="menuItem"
-                            style={menuItemStyle}
-                            onClick={menu.close}
-                          >
-                            Mở object browser
-                          </Link>
-                          <button
-                            type="button"
-                            className="menuItem"
-                            style={menuItemStyle}
-                            onClick={() => {
-                              menu.close();
-                              setSecretVisible(false);
-                              setForm({
-                                editing: b.name,
-                                name: b.name,
-                                num: b.max
-                                  ? String(Math.round(b.max / UNITS.GiB))
-                                  : "50",
-                                unit: "GiB",
-                                unlimited: !b.max,
-                                provider: b.provider ?? "internal",
-                                region: b.region ?? "",
-                                apiEndpoint: b.apiEndpoint ?? "",
-                                accessId: b.accessId ?? "",
-                                accessSecret: b.accessSecret ?? "",
-                                publicEnabled: !!b.publicEnabled,
-                              });
-                            }}
-                          >
-                            Sửa pool
-                          </button>
-                          <button
-                            type="button"
-                            className="menuItemDanger"
-                            style={{ ...menuItemStyle, color: "var(--dgr)" }}
-                            onClick={() => {
-                              menu.close();
-                              setDeleting(b.name);
-                            }}
-                          >
-                            Xoá pool
-                          </button>
-                        </RowMenu>
-                      )}
-                    </Td>
-                  </tr>
-                );
-              })}
-              {rows.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={5}
+              {pools.map((p) => (
+                <tr
+                  key={p.pid}
+                  className="trHover"
+                  style={{ borderBottom: "1px solid var(--line)" }}
+                >
+                  <Td style={{ fontSize: "var(--fs)" }}>{p.name}</Td>
+                  <Td style={{ fontSize: 13, color: "var(--dim)" }}>
+                    {p.provider}
+                  </Td>
+                  <Td style={{ fontSize: 12.5, ...monoStyle }}>
+                    {p.physical_bucket}
+                  </Td>
+                  <Td
                     style={{
-                      padding: "40px 16px",
-                      textAlign: "center",
-                      fontSize: 13,
+                      fontSize: 12.5,
                       color: "var(--dim)",
+                      ...monoStyle,
                     }}
                   >
-                    Không tìm thấy pool phù hợp.
-                  </td>
+                    {p.api_endpoint ?? "—"}
+                  </Td>
+                  <Td
+                    style={{
+                      fontSize: 12.5,
+                      fontWeight: p.is_configured ? 400 : 600,
+                      color: p.is_configured ? "var(--dim)" : "var(--dgr)",
+                    }}
+                  >
+                    {p.is_configured
+                      ? (p.access_id ?? "đã cấu hình")
+                      : "CHƯA CÓ CREDENTIAL"}
+                  </Td>
+                  <Td
+                    align="center"
+                    style={{ padding: "0 8px", position: "relative" }}
+                  >
+                    <RowMenuButton
+                      onClick={(e) => menu.toggle(`p-${p.pid}`, e, 168)}
+                    />
+                    {menu.open === `p-${p.pid}` && (
+                      <RowMenu pos={menu.pos}>
+                        <button
+                          type="button"
+                          className="menuItem"
+                          style={menuItemStyle}
+                          onClick={() => {
+                            menu.close();
+                            setForm({
+                              mode: "edit",
+                              pid: p.pid,
+                              name: p.name,
+                              provider: p.provider,
+                              region: p.region ?? "",
+                              api_endpoint: p.api_endpoint ?? "",
+                              physical_bucket: p.physical_bucket,
+                              access_id: p.access_id ?? "",
+                              // Never prefilled: the server does not return it.
+                              access_secret: "",
+                              touched: false,
+                            });
+                          }}
+                        >
+                          Sửa cấu hình
+                        </button>
+                        <button
+                          type="button"
+                          className="menuItem"
+                          style={{ ...menuItemStyle, color: "var(--dgr)" }}
+                          onClick={() => {
+                            menu.close();
+                            setConfirmDelete(p);
+                          }}
+                        >
+                          Xoá pool
+                        </button>
+                      </RowMenu>
+                    )}
+                  </Td>
                 </tr>
-              )}
+              ))}
             </tbody>
           </table>
         </TableWrap>
+
+        {pools.length === 0 && (
+          <div
+            style={{
+              marginTop: 14,
+              fontSize: 13,
+              color: "var(--dim)",
+              lineHeight: 1.6,
+            }}
+          >
+            Chưa có pool nào. Gateway không phục vụ được request S3 nào cho tới
+            khi có ít nhất một pool đã cấu hình credential.
+          </div>
+        )}
       </Page>
 
       {form && (
-        <FormModal width={560} onClose={() => setForm(null)}>
+        <FormModal onClose={() => setForm(null)}>
           <FormHead
-            title={isEdit ? "Sửa pool" : "Tạo pool"}
+            title={form.mode === "create" ? "Tạo pool" : "Sửa cấu hình pool"}
             sub={
-              isEdit
-                ? "Cập nhật chủ sở hữu và quota cho pool này."
-                : 'Tên pool phải hợp lệ theo luật S3 và chưa tồn tại trên gateway. Chọn "Hệ thống" để tạo pool tổng không tính vào quota của user nào.'
+              form.mode === "create"
+                ? "Một pool là object store thật cộng với physical bucket bên trong nó."
+                : form.name
             }
           />
-          <FormBody>
-            <label
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 7,
-                fontSize: 12,
-                fontWeight: 500,
-                color: "var(--dim)",
-              }}
-            >
-              Tên pool
+          <FormBody padding="18px 24px" gap={14}>
+            <div>
+              <div style={label}>Tên pool</div>
               <input
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                disabled={isEdit}
-                placeholder="system-archive"
+                disabled={form.mode === "edit"}
+                placeholder="main"
                 style={{
-                  ...fieldInput,
-                  fontSize: 14,
+                  ...field,
                   border: `1px solid ${
-                    nameError
-                      ? "var(--dgr)"
-                      : nameValid && !isEdit
-                        ? "var(--ok)"
-                        : "var(--line2)"
+                    form.touched && nameErr ? "var(--dgr)" : "var(--line2)"
                   }`,
-                  background: isEdit ? "var(--hover)" : "var(--panel2)",
                 }}
               />
-            </label>
-            {nameError && (
-              <div style={{ marginTop: -8, fontSize: 12.5, color: "#FF9AA2" }}>
-                {nameError}
-              </div>
-            )}
-            {nameValid && !isEdit && (
-              <div
-                style={{ marginTop: -8, fontSize: 12.5, color: "var(--ok)" }}
-              >
-                Tên hợp lệ
-              </div>
-            )}
-
-            <div>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: "var(--dim)",
-                  marginBottom: 7,
-                }}
-              >
-                Quota pool
-              </div>
-              <QuotaFields
-                num={form.num}
-                unit={form.unit}
-                unlimited={form.unlimited}
-                onNum={(num) => setForm({ ...form, num })}
-                onUnit={(unit) => setForm({ ...form, unit })}
-                onUnlimited={(unlimited) => setForm({ ...form, unlimited })}
-              />
+              {form.touched && nameErr && (
+                <div style={{ ...hint, color: "var(--dgr)" }}>{nameErr}</div>
+              )}
             </div>
 
-            <div style={{ height: 1, background: "var(--line)" }} />
+            <div>
+              <div style={label}>Provider</div>
+              <select
+                value={form.provider}
+                disabled={form.mode === "edit"}
+                onChange={(e) =>
+                  setForm({ ...form, provider: e.target.value as Provider })
+                }
+                style={field}
+              >
+                {PROVIDERS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             <div>
+              <div style={label}>Physical bucket</div>
+              <input
+                value={form.physical_bucket}
+                onChange={(e) =>
+                  setForm({ ...form, physical_bucket: e.target.value })
+                }
+                placeholder="osg-main"
+                style={{
+                  ...field,
+                  fontFamily: "'IBM Plex Mono',monospace",
+                  border: `1px solid ${
+                    form.touched && bucketErr ? "var(--dgr)" : "var(--line2)"
+                  }`,
+                }}
+              />
               <div
                 style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: "var(--dim)",
-                  marginBottom: 7,
+                  ...hint,
+                  color:
+                    form.touched && bucketErr ? "var(--dgr)" : "var(--faint)",
                 }}
               >
-                Provider lưu trữ
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 10,
-                }}
-              >
-                <label style={fieldCol}>
-                  Provider
-                  <select
-                    value={form.provider}
-                    onChange={(e) =>
-                      setForm({ ...form, provider: e.target.value })
-                    }
-                    style={{
-                      ...fieldInput,
-                      fontFamily: "inherit",
-                      fontSize: 13,
-                      padding: "0 10px",
-                    }}
-                  >
-                    {PROVIDERS.map((p) => (
-                      <option key={p.value} value={p.value}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={fieldCol}>
-                  Region
-                  <input
-                    value={form.region}
-                    onChange={(e) =>
-                      setForm({ ...form, region: e.target.value })
-                    }
-                    placeholder="ap-southeast-1"
-                    style={fieldInput}
-                  />
-                </label>
-              </div>
-              <label style={{ ...fieldCol, marginTop: 10 }}>
-                Provider API endpoint
-                <input
-                  value={form.apiEndpoint}
-                  onChange={(e) =>
-                    setForm({ ...form, apiEndpoint: e.target.value })
-                  }
-                  placeholder="https://s3.ap-southeast-1.amazonaws.com"
-                  style={fieldInput}
-                />
-              </label>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 10,
-                  marginTop: 10,
-                }}
-              >
-                <label style={fieldCol}>
-                  ID (access key)
-                  <input
-                    value={form.accessId}
-                    onChange={(e) =>
-                      setForm({ ...form, accessId: e.target.value })
-                    }
-                    placeholder="AKIA…"
-                    style={fieldInput}
-                  />
-                </label>
-                <label style={fieldCol}>
-                  Secret
-                  <div style={{ position: "relative" }}>
-                    <input
-                      type={secretVisible ? "text" : "password"}
-                      value={form.accessSecret}
-                      onChange={(e) =>
-                        setForm({ ...form, accessSecret: e.target.value })
-                      }
-                      placeholder="••••••••••••"
-                      style={{
-                        ...fieldInput,
-                        width: "100%",
-                        padding: "0 58px 0 12px",
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setSecretVisible(!secretVisible)}
-                      style={{
-                        position: "absolute",
-                        right: 4,
-                        top: 4,
-                        height: 30,
-                        padding: "0 10px",
-                        border: 0,
-                        borderRadius: 6,
-                        background: "var(--hover)",
-                        color: "var(--dim)",
-                        fontSize: 11.5,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {secretVisible ? "Ẩn" : "Hiện"}
-                    </button>
-                  </div>
-                </label>
+                {form.touched && bucketErr
+                  ? bucketErr
+                  : "Bucket thật trên object store. Client không bao giờ thấy tên này."}
               </div>
             </div>
 
-            <div style={{ height: 1, background: "var(--line)" }} />
+            <div>
+              <div style={label}>Region</div>
+              <input
+                value={form.region}
+                onChange={(e) => setForm({ ...form, region: e.target.value })}
+                placeholder="ap-southeast-1"
+                style={field}
+              />
+            </div>
 
             <div>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  justifyContent: "space-between",
-                  gap: 14,
-                  cursor: "pointer",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: "var(--dim)",
-                  }}
-                >
-                  Public link
-                  <div
-                    style={{
-                      fontSize: 11.5,
-                      color: "var(--faint)",
-                      fontWeight: 400,
-                      marginTop: 3,
-                    }}
-                  >
-                    Cho phép truy cập object qua URL công khai, không cần ký
-                    request
-                  </div>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={form.publicEnabled}
-                  onChange={(e) =>
-                    setForm({ ...form, publicEnabled: e.target.checked })
-                  }
-                  style={{
-                    accentColor: "var(--acc)",
-                    width: 16,
-                    height: 16,
-                    cursor: "pointer",
-                    flex: "0 0 auto",
-                    marginTop: 2,
-                  }}
-                />
-              </label>
-              {form.publicEnabled && (
-                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                  <input
-                    value={publicLink}
-                    readOnly
-                    style={{
-                      ...fieldInput,
-                      flex: 1,
-                      height: 36,
-                      background: "var(--hover)",
-                      color: "var(--dim)",
-                      fontSize: 12.5,
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard?.writeText(publicLink);
-                      } catch {
-                        // clipboard unavailable — still confirm to the user
-                      }
-                      toast("Đã sao chép public link");
-                    }}
-                    style={{
-                      height: 36,
-                      padding: "0 14px",
-                      border: "1px solid var(--line2)",
-                      background: "var(--panel2)",
-                      color: "var(--tx)",
-                      borderRadius: 8,
-                      fontSize: 12.5,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Sao chép
-                  </button>
+              <div style={label}>API endpoint</div>
+              <input
+                value={form.api_endpoint}
+                onChange={(e) =>
+                  setForm({ ...form, api_endpoint: e.target.value })
+                }
+                placeholder="https://minio.internal:9000"
+                style={{ ...field, fontFamily: "'IBM Plex Mono',monospace" }}
+              />
+              <div style={hint}>Để trống nếu dùng AWS S3.</div>
+            </div>
+
+            <div>
+              <div style={label}>Access key ID</div>
+              <input
+                value={form.access_id}
+                onChange={(e) =>
+                  setForm({ ...form, access_id: e.target.value })
+                }
+                placeholder="AKIA…"
+                style={{ ...field, fontFamily: "'IBM Plex Mono',monospace" }}
+              />
+            </div>
+
+            <div>
+              <div style={label}>Access key secret</div>
+              <input
+                type="password"
+                value={form.access_secret}
+                onChange={(e) =>
+                  setForm({ ...form, access_secret: e.target.value })
+                }
+                placeholder={
+                  form.mode === "edit"
+                    ? "Để trống nếu không đổi"
+                    : "Secret của upstream"
+                }
+                autoComplete="new-password"
+                style={{ ...field, fontFamily: "'IBM Plex Mono',monospace" }}
+              />
+              {form.mode === "edit" && (
+                <div style={hint}>
+                  Để trống nếu không đổi. Máy chủ không trả secret về, nên không
+                  có gì để prefill.
                 </div>
               )}
             </div>
           </FormBody>
-          <FormFoot>
+          <FormFoot padding="14px 24px">
             <FormCancel onClick={() => setForm(null)} />
             <FormSubmit
-              label={isEdit ? "Lưu thay đổi" : "Tạo pool"}
-              enabled={nameValid}
-              onClick={submit}
+              label={form.mode === "create" ? "Tạo pool" : "Lưu thay đổi"}
+              enabled
+              onClick={() => void savePool()}
             />
           </FormFoot>
         </FormModal>
       )}
 
-      {deleting && (
-        <ConfirmDangerModal
-          title={`Xoá pool ${deleting}`}
-          body="Hành động này xoá cascade toàn bộ metadata object trong pool. Không hoàn tác được."
-          target={deleting}
-          confirmLabel="Xoá pool"
-          onClose={() => setDeleting(null)}
-          onConfirm={() => {
-            // TODO(slice#7): DELETE /api/admin/pools/:name
-            setPools(pools.filter((b) => b.name !== deleting));
-            setDeleting(null);
-            toast(`Đã xoá pool ${deleting}`, "danger");
-          }}
-        />
+      {confirmDelete && (
+        <FormModal width={440} onClose={() => setConfirmDelete(null)}>
+          <FormHead
+            title="Xoá pool"
+            sub={`${confirmDelete.name} — ${confirmDelete.physical_bucket}`}
+          />
+          <div
+            style={{
+              padding: "18px 24px",
+              fontSize: 13,
+              color: "var(--dim)",
+              lineHeight: 1.6,
+            }}
+          >
+            Máy chủ từ chối nếu còn bucket nào trỏ tới pool này. Không có dữ
+            liệu nào trên object store bị xoá.
+          </div>
+          <FormFoot padding="14px 24px">
+            <FormCancel onClick={() => setConfirmDelete(null)} />
+            <FormSubmit
+              label="Xoá pool"
+              enabled
+              onClick={() =>
+                void (async () => {
+                  const done = await run(() => deletePool(confirmDelete.pid), {
+                    onError: (m) => toast(m, "danger"),
+                  });
+                  setConfirmDelete(null);
+                  if (done === undefined) return;
+                  await router.invalidate();
+                  toast("Đã xoá pool");
+                })()
+              }
+            />
+          </FormFoot>
+        </FormModal>
       )}
     </>
   );
 }
-
-const statLabel = {
-  fontSize: 11,
-  letterSpacing: ".1em",
-  color: "var(--faint)",
-  fontWeight: 600,
-} as const;
-
-const statValue = {
-  fontSize: 24,
-  fontWeight: 600,
-  letterSpacing: "-.02em",
-  marginTop: 10,
-  fontFamily: "'IBM Plex Mono',monospace",
-} as const;
-
-const statSub = {
-  fontSize: 12,
-  color: "var(--dim)",
-  marginTop: 6,
-} as const;

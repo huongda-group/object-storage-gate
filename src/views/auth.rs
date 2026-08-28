@@ -7,7 +7,7 @@ pub struct LoginResponse {
     pub token: String,
     pub pid: String,
     pub name: String,
-    pub is_verified: bool,
+    pub must_change_password: bool,
 }
 
 impl LoginResponse {
@@ -17,7 +17,7 @@ impl LoginResponse {
             token: token.to_string(),
             pid: user.pid.to_string(),
             name: user.name.clone(),
-            is_verified: user.email_verified_at.is_some(),
+            must_change_password: user.must_change_password,
         }
     }
 }
@@ -29,6 +29,7 @@ pub struct CurrentResponse {
     pub email: String,
     pub role: String,
     pub max_bytes: i64,
+    pub must_change_password: bool,
 }
 
 impl CurrentResponse {
@@ -40,6 +41,7 @@ impl CurrentResponse {
             email: user.email.clone(),
             role: user.role.clone(),
             max_bytes: user.max_bytes,
+            must_change_password: user.must_change_password,
         }
     }
 }

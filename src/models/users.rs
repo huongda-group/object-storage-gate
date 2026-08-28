@@ -1,14 +1,37 @@
 use async_trait::async_trait;
-use chrono::{offset::Local, Duration};
 use loco_rs::{auth::jwt, hash, prelude::*};
+use sea_orm::{PaginatorTrait, QueryOrder};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use uuid::Uuid;
 
 pub use super::_entities::users::{self, ActiveModel, Entity, Model};
 
-pub const MAGIC_LINK_LENGTH: i8 = 32;
-pub const MAGIC_LINK_EXPIRATION_MIN: i8 = 5;
+use super::_entities::buckets;
+
+/// Prefix length of a personal access token, stored in the clear so the hash can be looked up.
+const PAT_PREFIX_LEN: usize = 12;
+
+/// Builds a fresh personal access token and its stored representation.
+///
+/// Returns `(plaintext, prefix, hash)`.
+/// The plaintext leaves the process exactly once, at rotation; the column holds only the hash.
+///
+/// # Errors
+///
+/// When hashing fails.
+fn mint_api_token() -> ModelResult<(String, String, String)> {
+    let prefix = Uuid::new_v4().simple().to_string()[..PAT_PREFIX_LEN].to_string();
+    let secret = Uuid::new_v4().simple().to_string();
+    let token = format!("osg_pat_{prefix}_{secret}");
+    let hashed = hash::hash_password(&token).map_err(|e| ModelError::Any(e.into()))?;
+    Ok((token, prefix, hashed))
+}
+
+/// Extracts the lookup prefix from a presented token.
+fn token_prefix(token: &str) -> Option<&str> {
+    token.strip_prefix("osg_pat_")?.get(..PAT_PREFIX_LEN)
+}
 
 pub const ROLE_ADMIN: &str = "admin";
 pub const ROLE_USER: &str = "user";
@@ -24,6 +47,50 @@ impl Model {
     pub const fn is_unlimited(&self) -> bool {
         self.max_bytes == 0
     }
+}
+
+/// Shortest password the API will accept.
+/// The starter allowed four characters, which is not a password.
+pub const MIN_PASSWORD_LEN: usize = 8;
+
+/// Longest password the API will accept, so a multi-megabyte body cannot reach Argon2.
+pub const MAX_PASSWORD_LEN: usize = 256;
+
+/// Validates a password before it is hashed.
+///
+/// # Errors
+///
+/// Returns a message error when the password is too short or too long.
+pub fn validate_password(password: &str) -> ModelResult<()> {
+    if password.len() < MIN_PASSWORD_LEN {
+        return Err(ModelError::msg("password must be at least 8 characters"));
+    }
+    if password.len() > MAX_PASSWORD_LEN {
+        return Err(ModelError::msg("password must be at most 256 characters"));
+    }
+    Ok(())
+}
+
+/// Validates a role string against the two roles the system knows.
+///
+/// # Errors
+///
+/// Returns a message error for anything else.
+pub fn validate_role(role: &str) -> ModelResult<()> {
+    if role == ROLE_ADMIN || role == ROLE_USER {
+        return Ok(());
+    }
+    Err(ModelError::msg("role must be 'admin' or 'user'"))
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CreateUserParams {
+    pub email: String,
+    pub name: String,
+    pub password: String,
+    pub role: String,
+    /// Required on purpose: `0` means unlimited, and unlimited must be a decision, never a default.
+    pub max_bytes: i64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -66,7 +133,11 @@ impl ActiveModelBehavior for super::_entities::users::ActiveModel {
         if insert {
             let mut this = self;
             this.pid = ActiveValue::Set(Uuid::new_v4());
-            this.api_key = ActiveValue::Set(format!("lo-{}", Uuid::new_v4()));
+            // The token minted here is intentionally discarded: a user who wants a PAT rotates one, and rotation is the only path that ever reveals it.
+            let (_plaintext, prefix, hashed) =
+                mint_api_token().map_err(|e| DbErr::Custom(e.to_string()))?;
+            this.api_key = ActiveValue::Set(hashed);
+            this.api_key_prefix = ActiveValue::Set(Some(prefix));
             Ok(this)
         } else {
             Ok(self)
@@ -77,15 +148,7 @@ impl ActiveModelBehavior for super::_entities::users::ActiveModel {
 #[async_trait]
 impl Authenticable for Model {
     async fn find_by_api_key(db: &DatabaseConnection, api_key: &str) -> ModelResult<Self> {
-        let user = users::Entity::find()
-            .filter(
-                model::query::condition()
-                    .eq(users::Column::ApiKey, api_key)
-                    .build(),
-            )
-            .one(db)
-            .await?;
-        user.ok_or_else(|| ModelError::EntityNotFound)
+        Self::find_by_api_key(db, api_key).await
     }
 
     async fn find_by_claims_key(db: &DatabaseConnection, claims_key: &str) -> ModelResult<Self> {
@@ -111,77 +174,17 @@ impl Model {
         user.ok_or_else(|| ModelError::EntityNotFound)
     }
 
-    /// finds a user by the provided verification token
+    /// A user by row id, for paths that already hold a foreign key rather than a public id.
+    ///
+    /// `find_by_pid` takes a UUID; an `i32` stringified into it parses as nothing and reads as "no such user".
     ///
     /// # Errors
-    ///
-    /// When could not find user by the given token or DB query error
-    pub async fn find_by_verification_token(
-        db: &DatabaseConnection,
-        token: &str,
-    ) -> ModelResult<Self> {
-        let user = users::Entity::find()
-            .filter(
-                model::query::condition()
-                    .eq(users::Column::EmailVerificationToken, token)
-                    .build(),
-            )
+    /// Returns an error when no user has that id, or on DB failure.
+    pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> ModelResult<Self> {
+        Entity::find_by_id(id)
             .one(db)
-            .await?;
-        user.ok_or_else(|| ModelError::EntityNotFound)
-    }
-
-    /// finds a user by the magic token and verify and token expiration
-    ///
-    /// # Errors
-    ///
-    /// When could not find user by the given token or DB query error ot token expired
-    pub async fn find_by_magic_token(db: &DatabaseConnection, token: &str) -> ModelResult<Self> {
-        let user = users::Entity::find()
-            .filter(
-                query::condition()
-                    .eq(users::Column::MagicLinkToken, token)
-                    .build(),
-            )
-            .one(db)
-            .await?;
-
-        let user = user.ok_or_else(|| ModelError::EntityNotFound)?;
-        if let Some(expired_at) = user.magic_link_expiration {
-            if expired_at >= Local::now() {
-                Ok(user)
-            } else {
-                tracing::debug!(
-                    user_pid = user.pid.to_string(),
-                    token_expiration = expired_at.to_string(),
-                    "magic token expired for the user."
-                );
-                Err(ModelError::msg("magic token expired"))
-            }
-        } else {
-            tracing::error!(
-                user_pid = user.pid.to_string(),
-                "magic link expiration time not exists"
-            );
-            Err(ModelError::msg("expiration token not exists"))
-        }
-    }
-
-    /// finds a user by the provided reset token
-    ///
-    /// # Errors
-    ///
-    /// When could not find user by the given token or DB query error
-    pub async fn find_by_reset_token(db: &DatabaseConnection, token: &str) -> ModelResult<Self> {
-        let user = users::Entity::find()
-            .filter(
-                model::query::condition()
-                    .eq(users::Column::ResetToken, token)
-                    .build(),
-            )
-            .one(db)
-            .await?;
-        user.ok_or_else(|| ModelError::EntityNotFound)
+            .await?
+            .ok_or(ModelError::EntityNotFound)
     }
 
     /// finds a user by the provided pid
@@ -202,21 +205,46 @@ impl Model {
         user.ok_or_else(|| ModelError::EntityNotFound)
     }
 
-    /// finds a user by the provided api key
+    /// Finds a user by a presented personal access token.
+    ///
+    /// Looks up by the token's plaintext prefix, then verifies the full token against the stored Argon2 hash.
+    /// A prefix collision costs one extra hash verification and nothing else.
     ///
     /// # Errors
     ///
-    /// When could not find user by the given token or DB query error
+    /// When no user matches, or on a DB query error
     pub async fn find_by_api_key(db: &DatabaseConnection, api_key: &str) -> ModelResult<Self> {
-        let user = users::Entity::find()
+        let Some(prefix) = token_prefix(api_key) else {
+            return Err(ModelError::EntityNotFound);
+        };
+        let candidates = users::Entity::find()
             .filter(
                 model::query::condition()
-                    .eq(users::Column::ApiKey, api_key)
+                    .eq(users::Column::ApiKeyPrefix, prefix)
                     .build(),
             )
-            .one(db)
+            .all(db)
             .await?;
-        user.ok_or_else(|| ModelError::EntityNotFound)
+
+        candidates
+            .into_iter()
+            .find(|u| hash::verify_password(api_key, &u.api_key))
+            .ok_or(ModelError::EntityNotFound)
+    }
+
+    /// Issues a fresh personal access token, invalidating the previous one.
+    /// Returns the plaintext exactly once; it is not recoverable afterwards.
+    ///
+    /// # Errors
+    ///
+    /// When hashing or the DB write fails
+    pub async fn rotate_api_token(self, db: &DatabaseConnection) -> ModelResult<(Self, String)> {
+        let (token, prefix, hashed) = mint_api_token()?;
+        let mut am: ActiveModel = self.into();
+        am.api_key = ActiveValue::set(hashed);
+        am.api_key_prefix = ActiveValue::set(Some(prefix));
+        let user = am.update(db).await?;
+        Ok((user, token))
     }
 
     /// Verifies whether the provided plain password matches the hashed password
@@ -229,46 +257,6 @@ impl Model {
         hash::verify_password(password, &self.password)
     }
 
-    /// Asynchronously creates a user with a password and saves it to the database.
-    ///
-    /// # Errors
-    ///
-    /// When could not save the user into the DB
-    pub async fn create_with_password(
-        db: &DatabaseConnection,
-        params: &RegisterParams,
-    ) -> ModelResult<Self> {
-        let txn = db.begin().await?;
-
-        if users::Entity::find()
-            .filter(
-                model::query::condition()
-                    .eq(users::Column::Email, &params.email)
-                    .build(),
-            )
-            .one(&txn)
-            .await?
-            .is_some()
-        {
-            return Err(ModelError::EntityAlreadyExists {});
-        }
-
-        let password_hash =
-            hash::hash_password(&params.password).map_err(|e| ModelError::Any(e.into()))?;
-        let user = users::ActiveModel {
-            email: ActiveValue::set(params.email.clone()),
-            password: ActiveValue::set(password_hash),
-            name: ActiveValue::set(params.name.clone()),
-            ..Default::default()
-        }
-        .insert(&txn)
-        .await?;
-
-        txn.commit().await?;
-
-        Ok(user)
-    }
-
     /// Returns whether the instance has no user at all, i.e. it still needs its first-run admin setup.
     ///
     /// # Errors
@@ -278,7 +266,7 @@ impl Model {
         Ok(users::Entity::find().one(db).await?.is_some())
     }
 
-    /// Creates the first-run admin: an admin-role user, verified up front so no mail round-trip is needed to log in.
+    /// Creates the first-run admin: an admin-role user of a brand-new instance.
     /// Refused once any user exists.
     ///
     /// # Errors
@@ -303,7 +291,6 @@ impl Model {
             password: ActiveValue::set(password_hash),
             name: ActiveValue::set(params.name.clone()),
             role: ActiveValue::set(ROLE_ADMIN.to_string()),
-            email_verified_at: ActiveValue::set(Some(Local::now().into())),
             ..Default::default()
         }
         .insert(&txn)
@@ -312,6 +299,105 @@ impl Model {
         txn.commit().await?;
 
         Ok(user)
+    }
+
+    /// Creates a user on an admin's behalf, with a temporary password the user must replace at first login.
+    ///
+    /// # Errors
+    ///
+    /// When the email is taken, the role or password is invalid, or the DB write fails
+    pub async fn create_by_admin(
+        db: &DatabaseConnection,
+        params: &CreateUserParams,
+    ) -> ModelResult<Self> {
+        validate_role(&params.role)?;
+        validate_password(&params.password)?;
+        if params.max_bytes < 0 {
+            return Err(ModelError::msg("max_bytes must not be negative"));
+        }
+
+        let txn = db.begin().await?;
+
+        if users::Entity::find()
+            .filter(
+                model::query::condition()
+                    .eq(users::Column::Email, &params.email)
+                    .build(),
+            )
+            .one(&txn)
+            .await?
+            .is_some()
+        {
+            return Err(ModelError::EntityAlreadyExists {});
+        }
+
+        let password_hash =
+            hash::hash_password(&params.password).map_err(|e| ModelError::Any(e.into()))?;
+        let user = users::ActiveModel {
+            email: ActiveValue::set(params.email.clone()),
+            password: ActiveValue::set(password_hash),
+            name: ActiveValue::set(params.name.clone()),
+            role: ActiveValue::set(params.role.clone()),
+            max_bytes: ActiveValue::set(params.max_bytes),
+            must_change_password: ActiveValue::set(true),
+            ..Default::default()
+        }
+        .insert(&txn)
+        .await?;
+
+        txn.commit().await?;
+
+        Ok(user)
+    }
+
+    /// Lists every user, newest first.
+    ///
+    /// # Errors
+    ///
+    /// When the query fails
+    pub async fn list_all(db: &DatabaseConnection) -> ModelResult<Vec<Self>> {
+        Ok(users::Entity::find()
+            .order_by_desc(users::Column::Id)
+            .all(db)
+            .await?)
+    }
+
+    /// Deletes a user together with everything they own.
+    ///
+    /// The buckets foreign key is `ON DELETE SET NULL`, so a bare user delete would leave their bucket behind with no owner, still bound to its pool and still holding every object in it.
+    /// Objects cascade from their bucket, so deleting the buckets takes them too.
+    ///
+    /// # Errors
+    ///
+    /// When any of the deletes fails
+    pub async fn delete_with_owned_data(self, db: &DatabaseConnection) -> ModelResult<()> {
+        let txn = db.begin().await?;
+
+        buckets::Entity::delete_many()
+            .filter(buckets::Column::UserId.eq(self.id))
+            .exec(&txn)
+            .await?;
+
+        users::Entity::delete_by_id(self.id).exec(&txn).await?;
+
+        txn.commit().await?;
+        Ok(())
+    }
+
+    /// Counts admins, so the last one cannot be demoted or deleted.
+    ///
+    /// # Errors
+    ///
+    /// When the query fails
+    pub async fn admin_count(db: &DatabaseConnection) -> ModelResult<u64> {
+        Ok(users::Entity::find()
+            .filter(
+                model::query::condition()
+                    .eq(users::Column::Role, ROLE_ADMIN)
+                    .build(),
+            )
+            .count(db)
+            .await?)
     }
 
     /// Creates a JWT
@@ -327,93 +413,35 @@ impl Model {
 }
 
 impl ActiveModel {
-    /// Sets the email verification information for the user and updates it in the database.
-    ///
-    /// This method is used to record the timestamp when the email verification was sent and generate a unique verification token for the user.
-    ///
-    /// # Errors
-    ///
-    /// when has DB query error
-    pub async fn set_email_verification_sent(
-        mut self,
-        db: &DatabaseConnection,
-    ) -> ModelResult<Model> {
-        self.email_verification_sent_at = ActiveValue::set(Some(Local::now().into()));
-        self.email_verification_token = ActiveValue::Set(Some(Uuid::new_v4().to_string()));
-        self.update(db).await.map_err(ModelError::from)
-    }
-
-    /// Sets the information for a reset password request, generates a unique reset password token, and updates it in the database.
-    ///
-    /// This method records the timestamp when the reset password token is sent and generates a unique token for the user.
-    ///
-    /// # Arguments
+    /// Replaces the user's password hash.
+    /// Used by the admin reset endpoint and by the self-service change-password endpoint.
     ///
     /// # Errors
     ///
-    /// when has DB query error
-    pub async fn set_forgot_password_sent(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
-        self.reset_sent_at = ActiveValue::set(Some(Local::now().into()));
-        self.reset_token = ActiveValue::Set(Some(Uuid::new_v4().to_string()));
-        self.update(db).await.map_err(ModelError::from)
-    }
-
-    /// Records the verification time when a user verifies their email and updates it in the database.
-    ///
-    /// This method sets the timestamp when the user successfully verifies their email.
-    ///
-    /// # Errors
-    ///
-    /// when has DB query error
-    pub async fn verified(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
-        self.email_verified_at = ActiveValue::set(Some(Local::now().into()));
-        self.update(db).await.map_err(ModelError::from)
-    }
-
-    /// Resets the current user password with a new password and updates it in the database.
-    ///
-    /// This method hashes the provided password and sets it as the new password for the user.
-    ///
-    /// # Errors
-    ///
-    /// when has DB query error or could not hashed the given password
+    /// when has DB query error or could not hash the given password
     pub async fn reset_password(
-        mut self,
+        self,
         db: &DatabaseConnection,
         password: &str,
     ) -> ModelResult<Model> {
+        self.set_password(db, password, false).await
+    }
+
+    /// Replaces the password hash and sets whether the user must change it at next login.
+    /// An admin-issued temporary password passes `must_change = true`; a self-service change passes `false`.
+    ///
+    /// # Errors
+    ///
+    /// when has DB query error or could not hash the given password
+    pub async fn set_password(
+        mut self,
+        db: &DatabaseConnection,
+        password: &str,
+        must_change: bool,
+    ) -> ModelResult<Model> {
         self.password =
             ActiveValue::set(hash::hash_password(password).map_err(|e| ModelError::Any(e.into()))?);
-        self.reset_token = ActiveValue::Set(None);
-        self.reset_sent_at = ActiveValue::Set(None);
-        self.update(db).await.map_err(ModelError::from)
-    }
-
-    /// Creates a magic link token for passwordless authentication.
-    ///
-    /// Generates a random token with a specified length and sets an expiration time for the magic link.
-    /// This method is used to initiate the magic link authentication flow.
-    ///
-    /// # Errors
-    /// - Returns an error if database update fails
-    pub async fn create_magic_link(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
-        let random_str = hash::random_string(MAGIC_LINK_LENGTH as usize);
-        let expired = Local::now() + Duration::minutes(MAGIC_LINK_EXPIRATION_MIN.into());
-
-        self.magic_link_token = ActiveValue::set(Some(random_str));
-        self.magic_link_expiration = ActiveValue::set(Some(expired.into()));
-        self.update(db).await.map_err(ModelError::from)
-    }
-
-    /// Verifies and invalidates the magic link after successful authentication.
-    ///
-    /// Clears the magic link token and expiration time after the user has successfully authenticated using the magic link.
-    ///
-    /// # Errors
-    /// - Returns an error if database update fails
-    pub async fn clear_magic_link(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
-        self.magic_link_token = ActiveValue::set(None);
-        self.magic_link_expiration = ActiveValue::set(None);
+        self.must_change_password = ActiveValue::set(must_change);
         self.update(db).await.map_err(ModelError::from)
     }
 }

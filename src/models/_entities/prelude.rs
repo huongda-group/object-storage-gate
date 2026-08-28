@@ -3,6 +3,9 @@
 pub use super::access_key_permissions::Entity as AccessKeyPermissions;
 pub use super::access_key_prefixes::Entity as AccessKeyPrefixes;
 pub use super::access_keys::Entity as AccessKeys;
+pub use super::audit_logs::Entity as AuditLogs;
 pub use super::buckets::Entity as Buckets;
+pub use super::multipart_uploads::Entity as MultipartUploads;
 pub use super::objects::Entity as Objects;
+pub use super::pools::Entity as Pools;
 pub use super::users::Entity as Users;

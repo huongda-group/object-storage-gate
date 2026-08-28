@@ -10,6 +10,7 @@ pub struct Model {
     pub updated_at: DateTimeWithTimeZone,
     #[sea_orm(primary_key)]
     pub id: i32,
+    #[sea_orm(unique)]
     pub pid: Uuid,
     #[sea_orm(unique)]
     pub email: String,
@@ -17,17 +18,12 @@ pub struct Model {
     #[sea_orm(unique)]
     pub api_key: String,
     pub name: String,
-    pub reset_token: Option<String>,
-    pub reset_sent_at: Option<DateTimeWithTimeZone>,
-    pub email_verification_token: Option<String>,
-    pub email_verification_sent_at: Option<DateTimeWithTimeZone>,
-    pub email_verified_at: Option<DateTimeWithTimeZone>,
-    pub magic_link_token: Option<String>,
-    pub magic_link_expiration: Option<DateTimeWithTimeZone>,
     pub role: String,
     pub max_bytes: i64,
     pub used_bytes: i64,
     pub reserved_bytes: i64,
+    pub must_change_password: bool,
+    pub api_key_prefix: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -1,8 +1,9 @@
 ---
 source: tests/requests/auth.rs
+assertion_line: 188
 expression: "(response.status_code(), response.text())"
 ---
 (
     200,
-    "{\"pid\":\"PID\",\"name\":\"loco\",\"email\":\"test@loco.com\",\"role\":\"user\",\"max_bytes\":0}",
+    "{\"pid\":\"PID\",\"name\":\"loco\",\"email\":\"test@loco.com\",\"role\":\"user\",\"max_bytes\":0,\"must_change_password\":false}",
 )

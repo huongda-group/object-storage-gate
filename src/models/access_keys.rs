@@ -1,6 +1,6 @@
 use chrono::Utc;
 use loco_rs::prelude::*;
-use sea_orm::{prelude::DateTimeWithTimeZone, QueryOrder, TransactionTrait};
+use sea_orm::{prelude::DateTimeWithTimeZone, sea_query::Expr, QueryOrder, TransactionTrait};
 use uuid::Uuid;
 
 pub use super::_entities::access_keys::{ActiveModel, Column, Entity, Model};
@@ -20,6 +20,18 @@ pub const ACTION_DELETE: &str = "delete";
 pub const ACTION_LIST: &str = "list";
 pub const ACTION_MULTIPART: &str = "multipart";
 pub const ACTION_PRESIGNED: &str = "presigned";
+
+/// Whether `prefix` authorises `key`.
+///
+/// A prefix must land on a path boundary.
+/// Without that rule a key scoped to `team` also authorises `teamsecret/`, which is a different tenant's folder as far as the person who issued the key is concerned.
+#[must_use]
+pub fn prefix_allows(prefix: &str, key: &str) -> bool {
+    key.starts_with(prefix)
+        && (prefix.ends_with('/')
+            || key.len() == prefix.len()
+            || key.as_bytes()[prefix.len()] == b'/')
+}
 
 pub const LABELS: &[&str] = &["primary", "backup", "temporary", "ci", "readonly"];
 pub const ACTIONS: &[&str] = &[
@@ -237,17 +249,48 @@ impl Model {
             .ok_or(ModelError::EntityNotFound)
     }
 
+    /// Finds an access key by the public id a client presents, but only while it is usable.
+    ///
+    /// A revoked, disabled or expired key must read as absent: that is a credential-validity question, not an authorisation one, and one answer for all three does not confirm to the caller whether the key exists.
+    ///
     /// # Errors
-    /// Returns `EntityNotFound` if no key matches.
+    /// Returns an error when no usable key has that id, or on DB failure.
     pub async fn find_by_access_key_id(
         db: &DatabaseConnection,
         access_key_id: &str,
     ) -> ModelResult<Self> {
-        Entity::find()
+        let key = Entity::find()
             .filter(Column::AccessKeyId.eq(access_key_id))
             .one(db)
             .await?
-            .ok_or_else(|| ModelError::EntityNotFound)
+            .ok_or(ModelError::EntityNotFound)?;
+
+        if key.is_usable() {
+            Ok(key)
+        } else {
+            Err(ModelError::EntityNotFound)
+        }
+    }
+
+    /// Whether this key's prefix policy authorises `key`.
+    /// A key with no prefixes is scoped to the whole bucket.
+    ///
+    /// # Errors
+    /// Returns an error on DB failure.
+    pub async fn allows_key(&self, db: &DatabaseConnection, key: &str) -> ModelResult<bool> {
+        let prefixes = self.prefixes(db).await?;
+        if prefixes.is_empty() {
+            return Ok(true);
+        }
+        Ok(prefixes.iter().any(|p| prefix_allows(p, key)))
+    }
+
+    /// Whether this key carries `action`.
+    ///
+    /// # Errors
+    /// Returns an error on DB failure.
+    pub async fn allows_action(&self, db: &DatabaseConnection, action: &str) -> ModelResult<bool> {
+        Ok(self.permissions(db).await?.iter().any(|p| p == action))
     }
 
     /// Decrypt the stored secret for `SigV4` verification.
@@ -291,39 +334,65 @@ impl Model {
     /// Move a key between `active` and `disabled`.
     /// `revoked` is terminal: a revoked key is never brought back, because callers may already treat it as gone.
     ///
+    /// The guard lives in the UPDATE rather than in a check against `self`, because `self` may have been loaded before a concurrent revoke landed — which is exactly the window an admin hits when they revoke a leaked key while the console has a PATCH in flight.
+    ///
     /// # Errors
     /// Returns an error for an unknown status, for any change to a revoked key, or on DB failure.
     pub async fn set_status(self, db: &DatabaseConnection, status: &str) -> ModelResult<Self> {
-        if self.status == KEY_REVOKED {
-            return Err(invalid("a revoked key cannot change status"));
-        }
         if status != KEY_ACTIVE && status != KEY_DISABLED {
             return Err(invalid("status must be active or disabled"));
         }
-        let mut am: ActiveModel = self.into();
-        am.status = ActiveValue::set(status.to_string());
-        Ok(am.update(db).await?)
+
+        let res = Entity::update_many()
+            .col_expr(Column::Status, Expr::value(status))
+            .filter(Column::Id.eq(self.id))
+            .filter(Column::Status.ne(KEY_REVOKED))
+            .exec(db)
+            .await?;
+
+        if res.rows_affected == 0 {
+            return Err(invalid("a revoked key cannot change status"));
+        }
+
+        Self::reload(db, self.id).await
     }
 
-    /// Permanent. The row stays for audit; only the status changes.
+    /// Permanent.
+    /// The row stays for audit; only the status changes.
+    /// Idempotent: revoking an already-revoked key is not an error, because containing an incident is exactly when someone clicks twice.
     ///
     /// # Errors
     /// Returns an error on DB failure.
     pub async fn revoke(self, db: &DatabaseConnection) -> ModelResult<Self> {
-        let mut am: ActiveModel = self.into();
-        am.status = ActiveValue::set(KEY_REVOKED.to_string());
-        Ok(am.update(db).await?)
+        Entity::update_many()
+            .col_expr(Column::Status, Expr::value(KEY_REVOKED))
+            .filter(Column::Id.eq(self.id))
+            .exec(db)
+            .await?;
+
+        Self::reload(db, self.id).await
+    }
+
+    /// Reloads a key by its primary key, after a guarded UPDATE has changed it.
+    ///
+    /// # Errors
+    /// Returns an error when the row is gone, or on DB failure.
+    async fn reload(db: &DatabaseConnection, id: i32) -> ModelResult<Self> {
+        Entity::find_by_id(id)
+            .one(db)
+            .await?
+            .ok_or(ModelError::EntityNotFound)
     }
 
     /// Issue a replacement key with the same policy and disable this one.
     /// The old key is disabled rather than revoked so a running app has a window to swap its config.
     ///
+    /// Disables first, then creates.
+    /// The other order left a live replacement behind whenever the second write failed, and the caller got an `Err` so nobody ever saw its secret.
+    ///
     /// # Errors
-    /// Returns an error when the key is revoked, or on DB failure.
+    /// Returns an error when the key is revoked or expired, or on DB failure.
     pub async fn rotate(&self, db: &DatabaseConnection) -> ModelResult<(Self, String)> {
-        if self.status == KEY_REVOKED {
-            return Err(invalid("a revoked key cannot be rotated"));
-        }
         // Copying a lapsed `expires_at` onto the new key would fail validation with a confusing message; say what is actually wrong instead.
         if self.is_expired() {
             return Err(invalid(
@@ -336,13 +405,19 @@ impl Model {
             permissions: self.permissions(db).await?,
             prefixes: self.prefixes(db).await?,
         };
-        let (new_key, secret) = Self::create_key(db, self.user_id, &params).await?;
 
-        let mut am: ActiveModel = self.clone().into();
-        am.status = ActiveValue::set(KEY_DISABLED.to_string());
-        am.update(db).await?;
+        let disabled = Entity::update_many()
+            .col_expr(Column::Status, Expr::value(KEY_DISABLED))
+            .filter(Column::Id.eq(self.id))
+            .filter(Column::Status.ne(KEY_REVOKED))
+            .exec(db)
+            .await?;
 
-        Ok((new_key, secret))
+        if disabled.rows_affected == 0 {
+            return Err(invalid("a revoked key cannot be rotated"));
+        }
+
+        Self::create_key(db, self.user_id, &params).await
     }
 
     /// Replace the key's permissions.

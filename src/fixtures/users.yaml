@@ -3,23 +3,29 @@
   pid: 11111111-1111-1111-1111-111111111111
   email: user1@example.com
   password: "$argon2id$v=19$m=19456,t=2,p=1$ETQBx4rTgNAZhSaeYZKOZg$eYTdH26CRT6nUJtacLDEboP0li6xUwUF/q5nSlQ8uuc"
-  api_key: lo-95ec80d7-cb60-4b70-9b4b-9ef74cb88758
+  # An Argon2 hash, not a token: the column stores only hashes now, and no test uses a
+  # fixture PAT, so any hash will do.
+  api_key: "$argon2id$v=19$m=19456,t=2,p=1$ETQBx4rTgNAZhSaeYZKOZg$eYTdH26CRT6nUJtacLDEboP0li6xUwUF/q5nSlQ8uuc"
+  api_key_prefix: null
   name: user1
   role: user
   max_bytes: 0
   used_bytes: 0
   reserved_bytes: 0
+  must_change_password: false
   created_at: "2023-11-12T12:34:56.789Z"
   updated_at: "2023-11-12T12:34:56.789Z"
 - id: 2
   pid: 22222222-2222-2222-2222-222222222222
   email: user2@example.com
   password: "$argon2id$v=19$m=19456,t=2,p=1$ETQBx4rTgNAZhSaeYZKOZg$eYTdH26CRT6nUJtacLDEboP0li6xUwUF/q5nSlQ8uuc"
-  api_key: lo-153561ca-fa84-4e1b-813a-c62526d0a77e
+  api_key: "$argon2id$v=19$m=19456,t=2,p=1$RmlYdHVyZVR3b1NhbHRWYWx1ZQ$0Q1Wz3nMLmQb8xTfKcC4pE1sJ0uZaVxYt2rHgN7pQmA"
+  api_key_prefix: null
   name: user2
   role: user
   max_bytes: 0
   used_bytes: 0
   reserved_bytes: 0
+  must_change_password: false
   created_at: "2023-11-12T12:34:56.789Z"
   updated_at: "2023-11-12T12:34:56.789Z"

@@ -56,7 +56,12 @@ export const rotateKey = (pid: string) =>
 export const revokeKey = (pid: string) =>
   json<ApiKey>(`/api/keys/${pid}`, "DELETE");
 
-export const getPat = () => api<{ token: string }>("/api/token");
+/**
+ * Mints a new personal access token and returns it once.
+ *
+ * There is no read counterpart: the server stores only a hash, so a token that is not
+ * copied here is gone. Rotating invalidates the previous one immediately.
+ */
 export const rotatePat = () =>
   json<{ token: string }>("/api/token/rotate", "POST");
 

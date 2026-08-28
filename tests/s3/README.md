@@ -11,6 +11,37 @@ come from the environment, so the same files serve two purposes:
 
 Design notes: `docs/superpowers/specs/2026-07-29-s3-conformance-suite-design.md`.
 
+## Status against the gateway
+
+57 of 61 pass with `OSG_S3_TARGET=gateway` against a local MinIO upstream.
+
+The four that do not are all the same failure: `golden/upstream.json` has never
+been recorded, and four assertions compare the gateway's answer to S3's own.
+Recording it needs a real S3 endpoint — recording against MinIO would freeze
+MinIO's behaviour as the reference and quietly destroy the point of the file.
+Until someone runs `--record-golden` against real S3, those four are unanswerable
+rather than failing:
+
+- `test_auth.py::test_signature_far_outside_the_clock_window_is_refused`
+- `test_object_crud.py::test_default_content_type_matches_upstream`
+- `test_presigned.py::test_expired_presigned_url_is_refused`
+- `test_scoping.py::test_head_bucket_with_a_scoped_key`
+
+Running the other 57 against the gateway found six real bugs that the Rust suite
+had missed, because a mock upstream accepts what a real store refuses:
+
+1. `DeleteObjects` reached the store with no `Content-MD5`, which S3 requires.
+2. An upstream `ETag` arrives as `&#34;abc&#34;`; storing the entity text handed
+   the client a literal `&#34;` where a quote belongs.
+3. `UploadPartCopy` returns its `ETag` in the body, not a header — reading the
+   header gave the client an empty `ETag` and `CompleteMultipartUpload` then
+   rejected the part list.
+4. `x-amz-metadata-directive` was dropped, so `REPLACE` became a self-copy the
+   store refuses as `InvalidRequest`.
+5. `GET /{bucket}/` matched no route and fell through to the console, so a
+   `ListObjectsV2` came back as a page of HTML.
+6. Error bodies carried `<Resource>` but not `<BucketName>` and `<Key>`.
+
 ## Running
 
 ```bash

@@ -1,5 +1,8 @@
 use loco_rs::testing::prelude::*;
-use object_storage_gate::{app::App, models::buckets};
+use object_storage_gate::{
+    app::App,
+    models::{buckets, pools},
+};
 use sea_orm::{ActiveModelTrait, ActiveValue};
 use serial_test::serial;
 
@@ -17,17 +20,35 @@ async fn user(db: &sea_orm::DatabaseConnection, email: &str) -> i32 {
     .id
 }
 
+async fn pool(db: &sea_orm::DatabaseConnection, name: &str) -> pools::Model {
+    pools::Model::create(
+        db,
+        &pools::CreateParams {
+            name: name.to_string(),
+            provider: pools::PROVIDER_MINIO.to_string(),
+            physical_bucket: "osg-main".to_string(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 #[serial]
 async fn create_and_find_bucket() {
     let boot = boot_test::<App>().await.expect("boot");
     let db = &boot.app_context.db;
     let uid = user(db, "u1@ex.com").await;
+    let p = pool(db, "main").await;
 
-    let b = buckets::Model::create(db, uid, "photos", 0).await.unwrap();
+    let b = buckets::Model::create(db, uid, p.id, "photos", 0)
+        .await
+        .unwrap();
     assert!(!b.pid.is_nil());
     assert!(b.is_unlimited());
     assert_eq!(b.object_count, 0);
+    assert_eq!(b.pool_id, p.id);
 
     let found = buckets::Model::find_by_user_and_name(db, uid, "photos")
         .await
@@ -46,148 +67,133 @@ async fn bucket_name_unique_per_user() {
     let db = &boot.app_context.db;
     let u1 = user(db, "a@ex.com").await;
     let u2 = user(db, "b@ex.com").await;
+    let p = pool(db, "main").await;
 
-    buckets::Model::create(db, u1, "photos", 0).await.unwrap();
+    buckets::Model::create(db, u1, p.id, "photos", 0)
+        .await
+        .unwrap();
     // Same name, different user → OK.
-    buckets::Model::create(db, u2, "photos", 0).await.unwrap();
+    buckets::Model::create(db, u2, p.id, "photos", 0)
+        .await
+        .unwrap();
     // Same name, same user → unique-index violation.
-    assert!(buckets::Model::create(db, u1, "photos", 0).await.is_err());
-}
-
-#[tokio::test]
-#[serial]
-async fn system_pool_has_no_owner_and_unique_name() {
-    let boot = boot_test::<App>().await.expect("boot");
-    let db = &boot.app_context.db;
-    let uid = user(db, "owner@ex.com").await;
-
-    let pool = buckets::Model::create_system(db, "system-archive", 0)
-        .await
-        .unwrap();
-    assert!(pool.is_system());
-    assert!(pool.user_id.is_none());
-
-    // A user may own a bucket named like a system pool.
-    let owned = buckets::Model::create(db, uid, "system-archive", 0)
-        .await
-        .unwrap();
-    assert!(!owned.is_system());
-
-    // Two system pools may not share a name (COALESCE(user_id,0) unique index).
-    assert!(buckets::Model::create_system(db, "system-archive", 0)
+    assert!(buckets::Model::create(db, u1, p.id, "photos", 0)
         .await
         .is_err());
+}
 
-    let found = buckets::Model::find_system_by_name(db, "system-archive")
+/// A bucket cannot exist without a pool: the gateway would have nowhere to proxy it.
+#[tokio::test]
+#[serial]
+async fn a_bucket_belongs_to_a_pool() {
+    let boot = boot_test::<App>().await.expect("boot");
+    let db = &boot.app_context.db;
+    let uid = user(db, "bind@ex.com").await;
+    let one = pool(db, "one").await;
+    let two = pool(db, "two").await;
+
+    let a = buckets::Model::create(db, uid, one.id, "media-cdn", 0)
         .await
-        .unwrap()
-        .expect("system pool");
-    assert_eq!(found.id, pool.id);
+        .unwrap();
+    let b = buckets::Model::create(db, uid, two.id, "backup-db", 0)
+        .await
+        .unwrap();
+
+    assert_eq!(a.pool_id, one.id);
+    assert_eq!(b.pool_id, two.id);
+
+    // A pool_id that names no pool is refused rather than stored.
+    assert!(buckets::Model::create(db, uid, 999_999, "orphan", 0)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
 #[serial]
-async fn store_config_round_trips_with_encrypted_secret() {
+async fn count_for_pool_sees_every_owner() {
     let boot = boot_test::<App>().await.expect("boot");
     let db = &boot.app_context.db;
-    let uid = user(db, "store@ex.com").await;
-    let b = buckets::Model::create(db, uid, "media-cdn", 0)
+    let a = user(db, "count-a@ex.com").await;
+    let b = user(db, "count-b@ex.com").await;
+    let shared = pool(db, "shared").await;
+    let spare = pool(db, "spare").await;
+
+    buckets::Model::create(db, a, shared.id, "a-one", 0)
+        .await
+        .unwrap();
+    buckets::Model::create(db, b, shared.id, "b-one", 0)
         .await
         .unwrap();
 
-    // Defaults: internal provider, private, no upstream credentials.
-    assert_eq!(b.provider, buckets::PROVIDER_INTERNAL);
+    assert_eq!(
+        buckets::Model::count_for_pool(db, shared.id).await.unwrap(),
+        2
+    );
+    assert_eq!(
+        buckets::Model::count_for_pool(db, spare.id).await.unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn buckets_default_to_private() {
+    let boot = boot_test::<App>().await.expect("boot");
+    let db = &boot.app_context.db;
+    let uid = user(db, "priv@ex.com").await;
+    let p = pool(db, "main").await;
+
+    let b = buckets::Model::create(db, uid, p.id, "media-cdn", 0)
+        .await
+        .unwrap();
     assert!(!b.is_public());
-    assert!(b.decrypt_store_secret().is_err());
-
-    let b = b
-        .set_store(
-            db,
-            &buckets::StoreParams {
-                provider: buckets::PROVIDER_R2.to_string(),
-                region: Some("apac".to_string()),
-                api_endpoint: Some("https://acc.r2.cloudflarestorage.com".to_string()),
-                access_id: Some("R2AK7X9Q2M4N".to_string()),
-                access_secret: Some("upstream-secret".to_string()),
-                public_enabled: true,
-            },
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(b.provider, buckets::PROVIDER_R2);
-    assert!(b.is_public());
-    assert_eq!(b.region.as_deref(), Some("apac"));
-    // Stored encrypted, not in the clear.
-    let blob = b.access_secret_encrypted.as_deref().expect("secret stored");
-    assert_ne!(blob, b"upstream-secret");
-    assert_eq!(b.decrypt_store_secret().unwrap(), "upstream-secret");
 }
 
 #[tokio::test]
 #[serial]
-async fn store_rejects_unknown_provider_and_keeps_secret_on_omit() {
-    let boot = boot_test::<App>().await.expect("boot");
-    let db = &boot.app_context.db;
-    let uid = user(db, "prov@ex.com").await;
-    let b = buckets::Model::create(db, uid, "backup-db", 0)
-        .await
-        .unwrap();
-
-    assert!(b
-        .set_store(
-            db,
-            &buckets::StoreParams {
-                provider: "dropbox".to_string(),
-                ..Default::default()
-            },
-        )
-        .await
-        .is_err());
-
-    let b = b
-        .set_store(
-            db,
-            &buckets::StoreParams {
-                provider: buckets::PROVIDER_AWS.to_string(),
-                access_secret: Some("keep-me".to_string()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    // Editing without re-typing the secret must not wipe it.
-    let b = b
-        .set_store(
-            db,
-            &buckets::StoreParams {
-                provider: buckets::PROVIDER_AWS.to_string(),
-                region: Some("ap-southeast-1".to_string()),
-                access_secret: None,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(b.decrypt_store_secret().unwrap(), "keep-me");
-}
-
-#[tokio::test]
-#[serial]
-async fn list_for_user_excludes_system_and_other_owners() {
+async fn list_for_user_excludes_other_owners() {
     let boot = boot_test::<App>().await.expect("boot");
     let db = &boot.app_context.db;
     let a = user(db, "list-a@ex.com").await;
     let b = user(db, "list-b@ex.com").await;
+    let p = pool(db, "main").await;
 
-    buckets::Model::create(db, a, "a-two", 0).await.unwrap();
-    buckets::Model::create(db, a, "a-one", 0).await.unwrap();
-    buckets::Model::create(db, b, "b-one", 0).await.unwrap();
-    buckets::Model::create_system(db, "shared-pool", 0)
+    buckets::Model::create(db, a, p.id, "a-two", 0)
+        .await
+        .unwrap();
+    buckets::Model::create(db, a, p.id, "a-one", 0)
+        .await
+        .unwrap();
+    buckets::Model::create(db, b, p.id, "b-one", 0)
         .await
         .unwrap();
 
     let rows = buckets::Model::list_for_user(db, a).await.unwrap();
     let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, vec!["a-one", "a-two"]); // ordered by name
+}
+
+/// A bucket named after a path the gateway serves on would be created happily and then be unreachable over S3.
+/// Refusing at creation is the only point where that is visible.
+#[tokio::test]
+#[serial]
+async fn reserved_names_are_refused() {
+    let boot = boot_test::<App>().await.expect("boot");
+    let db = &boot.app_context.db;
+    let uid = user(db, "reserved@ex.com").await;
+    let p = pool(db, "main").await;
+
+    for name in object_storage_gate::models::buckets::RESERVED_BUCKET_NAMES {
+        assert!(
+            buckets::Model::create(db, uid, p.id, name, 0)
+                .await
+                .is_err(),
+            "reserved name {name} was accepted"
+        );
+    }
+
+    // A name that merely starts with a reserved one is fine.
+    assert!(buckets::Model::create(db, uid, p.id, "api-logs", 0)
+        .await
+        .is_ok());
 }

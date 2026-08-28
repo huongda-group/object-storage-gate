@@ -8,5 +8,11 @@ services:
     volumes:
       - sqlitedata:/app/data
 
+  worker:
+    environment:
+      DATABASE_URL: sqlite:///app/data/osg.sqlite?mode=rwc
+    volumes:
+      - sqlitedata:/app/data
+
 volumes:
   sqlitedata:

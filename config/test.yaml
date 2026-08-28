@@ -24,6 +24,10 @@ server:
   middlewares: 
     fallback:
       enable: false
+    # Mirrors production: loco's 2 MB default would reject every real S3 upload, and a test
+    # suite that does not share the production limit proves nothing about it.
+    limit_payload:
+      body_limit: disable
     static:
       enable: true
       must_exist: true
@@ -39,6 +43,9 @@ workers:
   #   - BackgroundQueue - Workers operate asynchronously in the background, processing queued.
   #   - ForegroundBlocking - Workers operate in the foreground and block until tasks are completed.
   #   - BackgroundAsync - Workers operate asynchronously in the background, processing tasks with async capabilities.
+  # ForegroundBlocking on purpose: the queue is not what these tests exercise, and requiring Redis to
+  # run `cargo test` would make the suite un-runnable on a fresh checkout. Running inline also makes
+  # the audit assertions deterministic instead of racing a spawned task.
   mode: ForegroundBlocking
 
   

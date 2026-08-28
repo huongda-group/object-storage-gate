@@ -9,3 +9,7 @@ examples/
 tests/s3/.venv/
 *.sqlite
 *.sqlite-*
+# Real JWT_SECRET and OSG_MASTER_KEY live here. The final image does not copy it, but the
+# builder layer would, and an exported build cache carries that layer.
+.env
+data/

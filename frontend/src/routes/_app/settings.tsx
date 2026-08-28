@@ -4,8 +4,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import type React from "react";
 import { useState } from "react";
 import { Header } from "../../components/Header";
+import { useToast } from "../../components/Toast";
 import { useShell } from "../../components/shell";
 import { H1, Page } from "../../components/ui";
+import { run } from "../../lib/api-client";
+import { changePassword } from "../../lib/auth";
+import { updateMe } from "../../lib/me";
 
 export const Route = createFileRoute("/_app/settings")({ component: Settings });
 
@@ -35,23 +39,31 @@ const card: React.CSSProperties = {
   padding: 20,
 };
 
-function SaveButton({ label }: { label: string }) {
+function SaveButton({
+  label,
+  enabled,
+  onClick,
+}: {
+  label: string;
+  enabled: boolean;
+  onClick: () => void;
+}) {
   return (
     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
       <button
         type="button"
-        disabled
-        title="Sắp có — chờ API cập nhật hồ sơ (slice #7)"
+        disabled={!enabled}
+        onClick={onClick}
         style={{
           height: 34,
           padding: "0 16px",
           border: 0,
           borderRadius: 8,
-          background: "var(--panel2)",
-          color: "var(--faint)",
+          background: enabled ? "var(--acc)" : "var(--panel2)",
+          color: enabled ? "var(--accTx)" : "var(--faint)",
           fontSize: 13,
           fontWeight: 600,
-          cursor: "not-allowed",
+          cursor: enabled ? "pointer" : "not-allowed",
         }}
       >
         {label}
@@ -67,8 +79,36 @@ function Settings() {
   const [pwNew, setPwNew] = useState("");
   const [pwConfirm, setPwConfirm] = useState("");
 
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
   const longEnough = pwNew.length >= 8;
   const matches = pwNew.length > 0 && pwNew === pwConfirm;
+
+  async function saveProfile() {
+    if (busy) return;
+    setBusy(true);
+    const updated = await run(() => updateMe(name.trim()), {
+      onError: (m) => toast(m, "danger"),
+    });
+    setBusy(false);
+    // A full reload drops the cached user, which still carries the old name in the header.
+    if (updated) globalThis.location.reload();
+  }
+
+  async function savePassword() {
+    if (busy) return;
+    setBusy(true);
+    const ok = await run(() => changePassword(pwCurrent, pwNew), {
+      onError: (m) => toast(m, "danger"),
+    });
+    setBusy(false);
+    if (ok === undefined) return;
+    setPwCurrent("");
+    setPwNew("");
+    setPwConfirm("");
+    toast("Đã đổi mật khẩu");
+  }
 
   return (
     <>
@@ -123,8 +163,11 @@ function Settings() {
                   />
                 </label>
               </div>
-              {/* TODO(slice#7): PATCH /api/me {name} */}
-              <SaveButton label="Lưu hồ sơ" />
+              <SaveButton
+                label="Lưu hồ sơ"
+                enabled={name.trim().length >= 2 && !busy}
+                onClick={() => void saveProfile()}
+              />
             </div>
           </div>
 
@@ -194,8 +237,11 @@ function Settings() {
                 Hai mật khẩu khớp nhau
               </div>
             </div>
-            {/* TODO(slice#7): POST /api/me/password {current, new} */}
-            <SaveButton label="Đổi mật khẩu" />
+            <SaveButton
+              label="Đổi mật khẩu"
+              enabled={longEnough && matches && pwCurrent.length > 0 && !busy}
+              onClick={() => void savePassword()}
+            />
           </div>
         </div>
       </Page>

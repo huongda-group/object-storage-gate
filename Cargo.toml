@@ -44,7 +44,6 @@ hmac = "0.13.0"
 sha2 = "0.11.0"
 hex = "0.4.3"
 percent-encoding = "2.3.2"
-quick-xml = { version = "0.42.0", features = ["serialize"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["stream", "rustls-no-provider", "http2"] }
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }

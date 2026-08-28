@@ -236,9 +236,8 @@ async fn record_audit(
 ///
 /// Reads `x-forwarded-for` only when the rate limiter is configured to trust it — the header is client-supplied, and an audit log full of addresses the client chose is worse than one that says `unknown`.
 fn client_ip(parts: &Parts) -> String {
-    let trusts_proxy = std::env::var("RATE_LIMIT_TRUST_PROXY")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
+    let trusts_proxy =
+        std::env::var("RATE_LIMIT_TRUST_PROXY").is_ok_and(|v| v == "true" || v == "1");
     if trusts_proxy {
         if let Some(v) = parts
             .headers

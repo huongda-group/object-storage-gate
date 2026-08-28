@@ -343,6 +343,7 @@ impl S3Request {
 /// Most callers arrive through `resolve` or `resolve_copy_source`, which authorise first.
 /// Two do not: `DeleteObjects` rewrites each key it has already run `allows_key` over, and the multipart cleanup task acts on rows the gateway wrote itself.
 /// Anything else must authorise before it calls this.
+#[must_use]
 pub fn physical_key_for(user: &users::Model, bucket: &buckets::Model, logical_key: &str) -> String {
     format!("{}/{}/{}", user.pid, bucket.name, logical_key)
 }

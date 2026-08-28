@@ -1,0 +1,17 @@
+# `cargo audit` gates CI. Every entry below is a transitive advisory with no fix reachable from
+# this repo — revisit each one when the dependency that pulls it in moves.
+[advisories]
+ignore = [
+    # quick-xml 0.38.4, quadratic attribute check and unbounded namespace allocation. Reached only
+    # through opendal, which pins `quick-xml = "0.38"`, so the fix has to land in loco-rs -> opendal
+    # first. The gateway's own XML — the only XML a tenant controls — is hand-written and parsed by
+    # `src/s3/xml.rs`, not by opendal; opendal parses responses from the upstream store.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+    # rkyv 0.7.46, out-of-bounds read when validating an untrusted archive. Pulled by rust_decimal
+    # via sea-orm/sqlx; the 0.7 line has no patch and nothing here reads an rkyv archive.
+    "RUSTSEC-2026-0235",
+    # rsa 0.9.10, Marvin timing sidechannel. sqlx-mysql depends on it for MySQL auth and upstream
+    # has published no patched version at all.
+    "RUSTSEC-2023-0071",
+]

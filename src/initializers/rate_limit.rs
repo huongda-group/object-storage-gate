@@ -45,9 +45,7 @@ fn burst() -> u32 {
 /// On the other hand, leaving it off behind a reverse proxy makes every request share the proxy's IP, which turns a per-IP limit into a gateway-wide one.
 /// Set `RATE_LIMIT_TRUST_PROXY=true` when, and only when, a proxy you control sets the header.
 fn trust_proxy() -> bool {
-    std::env::var("RATE_LIMIT_TRUST_PROXY")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false)
+    std::env::var("RATE_LIMIT_TRUST_PROXY").is_ok_and(|v| v == "true" || v == "1")
 }
 
 #[async_trait]

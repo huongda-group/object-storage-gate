@@ -6,8 +6,7 @@ use object_storage_gate::{
 use serial_test::serial;
 
 /// A 512-character prefix is exactly what `MAX_PREFIX_LEN` promises callers.
-/// On `MySQL` a varchar(255) column silently makes that promise a lie: the same request
-/// succeeds on Postgres and fails with "Data too long" there.
+/// On `MySQL` a varchar(255) column silently makes that promise a lie: the same request succeeds on Postgres and fails with "Data too long" there.
 #[tokio::test]
 #[serial]
 async fn accepts_a_prefix_at_the_documented_maximum() {
@@ -63,8 +62,8 @@ async fn accepts_an_object_key_at_the_s3_maximum() {
     assert_eq!(stored.object_key.len(), 1024);
 }
 
-/// S3 object keys are case-sensitive. `MySQL`'s default collation is not, so the unique index
-/// would treat two distinct keys as one and silently overwrite the first.
+/// S3 object keys are case-sensitive.
+/// `MySQL`'s default collation is not, so the unique index would treat two distinct keys as one and silently overwrite the first.
 #[tokio::test]
 #[serial]
 async fn object_keys_are_case_sensitive() {
@@ -100,10 +99,8 @@ async fn object_keys_are_case_sensitive() {
     assert_eq!(lower.size, 20);
 }
 
-/// Bucket names are lowercase-only by validation, so two names differing only in case can
-/// never both exist and the `MySQL` collation cannot bite there. It still bites on object keys,
-/// which `object_keys_are_case_sensitive` covers — this asserts the validation that makes the
-/// bucket case moot.
+/// Bucket names are lowercase-only by validation, so two names differing only in case can never both exist and the `MySQL` collation cannot bite there.
+/// It still bites on object keys, which `object_keys_are_case_sensitive` covers — this asserts the validation that makes the bucket case moot.
 #[tokio::test]
 #[serial]
 async fn bucket_names_reject_uppercase() {

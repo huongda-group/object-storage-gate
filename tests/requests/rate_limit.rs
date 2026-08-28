@@ -3,8 +3,7 @@ use object_storage_gate::app::App;
 use serial_test::serial;
 
 /// Hammers the login endpoint past the configured burst and expects a 429.
-/// Without this an attacker gets unlimited password guesses against every account, and
-/// loco 0.16 ships no rate-limit middleware of its own.
+/// Without this an attacker gets unlimited password guesses against every account, and loco 0.16 ships no rate-limit middleware of its own.
 #[tokio::test]
 #[serial]
 async fn login_is_rate_limited() {
@@ -32,10 +31,9 @@ async fn login_is_rate_limited() {
 
 /// The data plane must not be throttled by the same layer.
 ///
-/// The limiter exists to stop password guessing on login. Applied to S3 as well it breaks the
-/// product: `aws s3 sync` of 1200 objects stopped at the ~999th with a 429 before this was fixed,
-/// and a multipart upload of a large file trips it too. `SigV4` per access key is the data plane's
-/// control, and it is a stronger one than a per-IP bucket.
+/// The limiter exists to stop password guessing on login.
+/// Applied to S3 as well it breaks the product: `aws s3 sync` of 1200 objects stopped at the ~999th with a 429 before this was fixed, and a multipart upload of a large file trips it too.
+/// `SigV4` per access key is the data plane's control, and it is a stronger one than a per-IP bucket.
 #[tokio::test]
 #[serial]
 async fn the_s3_data_plane_is_not_rate_limited() {

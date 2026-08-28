@@ -58,7 +58,8 @@ pub struct CanonicalParts {
 
 /// Collapses `.` and `..` segments and repeated slashes, per RFC 3986 section 6.2.2.3.
 ///
-/// Only for non-S3 services. The suite's own `normalize-path.txt` spells out the S3 exception: an object literally named `my-object//example//photo.user` must keep both double slashes.
+/// Only for non-S3 services.
+/// The suite's own `normalize-path.txt` spells out the S3 exception: an object literally named `my-object//example//photo.user` must keep both double slashes.
 fn normalise(path: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     for seg in path.split('/') {
@@ -201,6 +202,11 @@ fn hmac(key: &[u8], data: &[u8]) -> [u8; 32] {
 
 /// AWS's default tolerance, and what every S3 client assumes.
 pub const CLOCK_SKEW_SECS: i64 = 900;
+
+/// The longest life S3 gives a presigned URL, seven days.
+///
+/// A presigned URL is a bearer token, and the skew rule does not apply to one, so this ceiling is the only thing standing between a signing client and a link that never expires.
+pub const MAX_PRESIGNED_EXPIRY_SECS: u64 = 604_800;
 
 /// What the client presented, in either the header or the query form.
 pub struct PresentedSignature {
@@ -347,12 +353,18 @@ pub fn canonical_query_for_presigned(query: &[(String, String)]) -> String {
 
 /// Whether a presigned signature is still inside the window its issuer chose.
 ///
+/// This is the only expiry check a presigned request gets: `verify` skips the clock skew rule for one, so a window wider than `MAX_PRESIGNED_EXPIRY_SECS` is refused here rather than left to run forever.
+///
 /// # Errors
-/// `AccessDenied` once `datetime + expires` has passed. Not `RequestTimeTooSkewed`: an expired link is not a clock problem, and a client that retries after fixing its clock will fail again.
+/// `AccessDenied` once `datetime + expires` has passed, or when `expires` exceeds seven days.
+/// Not `RequestTimeTooSkewed`: an expired link is not a clock problem, and a client that retries after fixing its clock will fail again.
 pub fn check_expiry(presented: &PresentedSignature, now: DateTime<Utc>) -> Result<(), S3Error> {
     let Some(expires) = presented.expires else {
         return Ok(());
     };
+    if expires > MAX_PRESIGNED_EXPIRY_SECS {
+        return Err(S3Error::AccessDenied);
+    }
     let signed_at = parse_amz_datetime(&presented.datetime).ok_or(S3Error::AccessDenied)?;
     let age = (now - signed_at).num_seconds();
     if age < 0 || age > i64::try_from(expires).unwrap_or(i64::MAX) {
@@ -365,8 +377,11 @@ pub fn check_expiry(presented: &PresentedSignature, now: DateTime<Utc>) -> Resul
 ///
 /// The clock check runs before the HMAC: rejecting a stale request costs one comparison, and verifying it first would spend a full HMAC on requests that are refused anyway.
 ///
+/// A presigned signature is exempt from the skew rule: it carries its own window in `X-Amz-Expires` and `check_expiry` is what enforces it.
+/// Applying skew to one caps every presigned URL at fifteen minutes no matter what expiry its issuer asked for.
+///
 /// # Errors
-/// `RequestTimeTooSkewed` beyond ±15 minutes; `SignatureDoesNotMatch` otherwise.
+/// `RequestTimeTooSkewed` beyond ±15 minutes for a header signature; `SignatureDoesNotMatch` otherwise.
 pub fn verify(
     presented: &PresentedSignature,
     secret: &str,
@@ -374,7 +389,7 @@ pub fn verify(
     now: DateTime<Utc>,
 ) -> Result<(), S3Error> {
     let signed_at = parse_amz_datetime(&presented.datetime).ok_or(S3Error::RequestTimeTooSkewed)?;
-    if (now - signed_at).num_seconds().abs() > CLOCK_SKEW_SECS {
+    if presented.expires.is_none() && (now - signed_at).num_seconds().abs() > CLOCK_SKEW_SECS {
         return Err(S3Error::RequestTimeTooSkewed);
     }
 
@@ -558,7 +573,8 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/s3_vectors");
         let mut ran = 0;
         walk(&root, &mut ran);
-        // A passing run over zero cases is the failure mode this guards. The suite ships 34 leaf cases and SKIP excludes one.
+        // A passing run over zero cases is the failure mode this guards.
+        // The suite ships 34 leaf cases and SKIP excludes one.
         assert_eq!(ran, 33, "expected 33 vector cases to run, ran {ran}");
     }
 
@@ -604,7 +620,8 @@ mod tests {
 
     /// Not covered by the AWS suite, and the most dangerous default in this module.
     ///
-    /// The suite signs for service `service`, which normalises; S3 does not. If the S3 path took the normalising branch, a key named `a/../b` would be signed as `b` and `//x` as `/x` — every real client would get `SignatureDoesNotMatch` while every vector above stayed green.
+    /// The suite signs for service `service`, which normalises; S3 does not.
+    /// If the S3 path took the normalising branch, a key named `a/../b` would be signed as `b` and `//x` as `/x` — every real client would get `SignatureDoesNotMatch` while every vector above stayed green.
     #[test]
     fn the_s3_path_is_not_normalised() {
         assert_eq!(canonical_uri("/bkt/a/../b", false), "/bkt/a/../b");
@@ -754,6 +771,21 @@ mod tests {
         assert!(verify(&sig, VECTOR_SECRET, &parts, outside).is_err());
     }
 
+    /// Skew does not apply to a presigned signature, which carries its own window.
+    ///
+    /// Reaching `SignatureDoesNotMatch` is the point: the placeholder signature is wrong, so getting that far proves the clock check let the request through.
+    /// Applying skew here capped every presigned URL at fifteen minutes whatever `X-Amz-Expires` said.
+    #[test]
+    fn a_presigned_signature_is_exempt_from_the_skew_rule() {
+        let (_, parts) = a_signed_get(VECTOR_SECRET, "20150830T120000Z");
+        let sig = presigned_at("20150830T120000Z", 3600);
+        let now = parse_amz_datetime("20150830T124500Z").unwrap();
+        assert!(matches!(
+            verify(&sig, VECTOR_SECRET, &parts, now),
+            Err(S3Error::SignatureDoesNotMatch)
+        ));
+    }
+
     #[test]
     fn a_missing_authorization_header_is_access_denied() {
         let headers = HeaderMap::new();
@@ -822,7 +854,8 @@ mod tests {
         assert_eq!(sig.expires, None);
     }
 
-    /// Presigned form. Spec §5.3.
+    /// Presigned form.
+    /// Spec §5.3.
     #[test]
     fn a_presigned_query_parses_and_carries_its_expiry() {
         let q = vec![
@@ -862,6 +895,20 @@ mod tests {
             check_expiry(&sig, now),
             Err(S3Error::AccessDenied)
         ));
+    }
+
+    /// Seven days is the ceiling S3 puts on a presigned URL, and with skew exempted it is the only thing keeping a signing client from minting a link that never expires.
+    #[test]
+    fn a_presigned_window_beyond_seven_days_is_access_denied() {
+        let sig = presigned_at("20150830T123600Z", MAX_PRESIGNED_EXPIRY_SECS + 1);
+        let now = parse_amz_datetime("20150830T124000Z").unwrap();
+        assert!(matches!(
+            check_expiry(&sig, now),
+            Err(S3Error::AccessDenied)
+        ));
+
+        let at_limit = presigned_at("20150830T123600Z", MAX_PRESIGNED_EXPIRY_SECS);
+        assert!(check_expiry(&at_limit, now).is_ok());
     }
 
     /// A link whose start time has not arrived yet is refused too; otherwise a client with a fast clock could mint one good for twice its stated life.

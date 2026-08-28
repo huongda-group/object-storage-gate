@@ -9,7 +9,8 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, m: &SchemaManager) -> Result<(), DbErr> {
         // The client's UploadId is this row's pid, never the upstream one: an upstream identifier in a client's hands is a piece of the physical layout the gateway exists to hide.
-        // There is no parts table — the store keeps the parts, and the client sends every part ETag back in CompleteMultipartUpload. The only thing the gateway must remember is how much quota it is holding.
+        // There is no parts table — the store keeps the parts, and the client sends every part ETag back in CompleteMultipartUpload.
+        // The only thing the gateway must remember is how much quota it is holding.
         create_table(
             m,
             "multipart_uploads",
@@ -43,6 +44,9 @@ impl MigrationTrait for Migration {
                 )
                 .await?;
         }
+
+        // create_table adds created_at/updated_at at precision 0 on MySQL, and `older_than` compares created_at against the cleanup cutoff.
+        crate::mysql_timestamps::widen_all(m).await?;
         Ok(())
     }
 

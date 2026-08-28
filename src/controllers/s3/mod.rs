@@ -1,7 +1,8 @@
 //! The S3 route tree.
 //!
 //! axum cannot route on query parameters, and S3 overloads verbs onto the same path with them — `?uploads`, `?uploadId`, `?list-type=2`, `?delete`.
-//! So each `(method, path-shape)` gets one handler that reads the query and dispatches. That layer is forced by the protocol, not chosen.
+//! So each `(method, path-shape)` gets one handler that reads the query and dispatches.
+//! That layer is forced by the protocol, not chosen.
 //!
 //! It is also where audit belongs (G7): it is the only place that sees both an auth failure and a result.
 pub mod copy;
@@ -34,7 +35,9 @@ use crate::{
 /// `SigV4` credentials are the signal: an S3 client always presents one, a browser never does.
 #[must_use]
 pub fn is_s3_request(parts: &Parts) -> bool {
-    // 1. Credentials, in either form. An S3 client that signs is unambiguous.
+    // 1.
+    // Credentials, in either form.
+    // An S3 client that signs is unambiguous.
     let signed_header = parts
         .headers
         .get("authorization")
@@ -45,7 +48,9 @@ pub fn is_s3_request(parts: &Parts) -> bool {
         return true;
     }
 
-    // 2. A query parameter only S3 uses. An unsigned S3 request still carries these, and a browser never does.
+    // 2.
+    // A query parameter only S3 uses.
+    // An unsigned S3 request still carries these, and a browser never does.
     for marker in [
         "list-type=",
         "uploads",
@@ -60,23 +65,25 @@ pub fn is_s3_request(parts: &Parts) -> bool {
         }
     }
 
-    // 3. The root is the console unless credentials say otherwise. S3 has no anonymous
-    // ListBuckets at all, so an unsigned GET / is a browser asking for the app, never an S3 call.
+    // 3.
+    // The root is the console unless credentials say otherwise.
+    // S3 has no anonymous ListBuckets at all, so an unsigned GET / is a browser asking for the app, never an S3 call.
     if parts.uri.path() == "/" {
         return false;
     }
 
-    // 4. The gateway serves its own paths on these names, so they are never buckets.
-    // `buckets::validate_name` refuses the same list, which is what keeps the two ends honest: an
-    // unrouted /api path answers from the management API rather than as AccessDenied from S3, and a
-    // console asset that does not exist is a 404 from the console rather than an S3 error.
+    // 4.
+    // The gateway serves its own paths on these names, so they are never buckets.
+    // `buckets::validate_name` refuses the same list, which is what keeps the two ends honest: an unrouted /api path answers from the management API rather than as AccessDenied from S3, and a console asset that does not exist is a 404 from the console rather than an S3 error.
     let path = parts.uri.path();
     let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
     if crate::models::buckets::RESERVED_BUCKET_NAMES.contains(&first) {
         return false;
     }
 
-    // 5. A browser navigation. Only a navigation asks for HTML, so this is what keeps console deep links working without a database lookup.
+    // 5.
+    // A browser navigation.
+    // Only a navigation asks for HTML, so this is what keeps console deep links working without a database lookup.
     if parts
         .headers
         .get("accept")
@@ -86,7 +93,9 @@ pub fn is_s3_request(parts: &Parts) -> bool {
         return false;
     }
 
-    // 6. A file the console actually ships. Assets are fetched with Accept: text/css or */*, so they land here rather than above.
+    // 6.
+    // A file the console actually ships.
+    // Assets are fetched with Accept: text/css or */*, so they land here rather than above.
     if console_file_exists(path) {
         return false;
     }
@@ -106,7 +115,8 @@ fn console_file_exists(path: &str) -> bool {
 
 /// Serves the console for anything that reached an S3 route without S3 credentials.
 ///
-/// This is the other half of `is_s3_request`: the static assets are mounted as the router's fallback, and a fallback never runs once a route matches. Without this, registering the S3 tree turns every console deep link and every bundled asset into an S3 error.
+/// This is the other half of `is_s3_request`: the static assets are mounted as the router's fallback, and a fallback never runs once a route matches.
+/// Without this, registering the S3 tree turns every console deep link and every bundled asset into an S3 error.
 async fn console_fallback(parts: Parts, body: axum::body::Body) -> Response {
     static DIR: OnceLock<Option<ServeDir<ServeFile>>> = OnceLock::new();
     let dir = DIR.get_or_init(|| {
@@ -130,12 +140,9 @@ async fn console_fallback(parts: Parts, body: axum::body::Body) -> Response {
 
 /// Records one S3 request, having already produced the response.
 ///
-/// This is the only place that sees both an authentication failure and a result, which is why
-/// `S3Request` is a constructor rather than an extractor: an extractor would have refused the
-/// request before anything here could describe it.
+/// This is the only place that sees both an authentication failure and a result, which is why `S3Request` is a constructor rather than an extractor: an extractor would have refused the request before anything here could describe it.
 ///
-/// A queue outage must not turn a good request into a 500, so a failure to enqueue is logged and
-/// the response is returned unchanged.
+/// A queue outage must not turn a good request into a 500, so a failure to enqueue is logged and the response is returned unchanged.
 async fn record_audit(
     ctx: &AppContext,
     parts: &Parts,
@@ -185,7 +192,8 @@ async fn record_audit(
         _ => None,
     };
 
-    // The S3 code, when the response was an error. A status alone cannot tell a wrong signature from a full bucket, and those are different operational problems.
+    // The S3 code, when the response was an error.
+    // A status alone cannot tell a wrong signature from a full bucket, and those are different operational problems.
     let code = res
         .extensions()
         .get::<crate::s3::xml::ErrorCode>()
@@ -226,9 +234,7 @@ async fn record_audit(
 
 /// The client address, as far as the gateway can tell.
 ///
-/// Reads `x-forwarded-for` only when the rate limiter is configured to trust it — the header is
-/// client-supplied, and an audit log full of addresses the client chose is worse than one that
-/// says `unknown`.
+/// Reads `x-forwarded-for` only when the rate limiter is configured to trust it — the header is client-supplied, and an audit log full of addresses the client chose is worse than one that says `unknown`.
 fn client_ip(parts: &Parts) -> String {
     let trusts_proxy = std::env::var("RATE_LIMIT_TRUST_PROXY")
         .map(|v| v == "true" || v == "1")
@@ -322,8 +328,7 @@ async fn not_implemented_after_auth(
 
 /// The one place that sees both an authentication failure and a result.
 ///
-/// `S3Request` is a constructor rather than an extractor precisely so this can exist: an extractor
-/// would have refused the request before anything here could describe it.
+/// `S3Request` is a constructor rather than an extractor precisely so this can exist: an extractor would have refused the request before anything here could describe it.
 macro_rules! s3_handler {
     ($name:ident, $imp:ident, $action:expr) => {
         async fn $name(State(ctx): State<AppContext>, req: Request) -> Response {
@@ -458,9 +463,7 @@ async fn object_put_impl(ctx: &AppContext, parts: &Parts, body: Body, rid: &str)
         return copy::copy_object(ctx, parts, rid).await;
     }
 
-    // The body is handed over unread: the reservation comes from Content-Length, so an over-quota
-    // upload is refused after the headers rather than after the client has pushed the whole object
-    // into the gateway.
+    // The body is handed over unread: the reservation comes from Content-Length, so an over-quota upload is refused after the headers rather than after the client has pushed the whole object into the gateway.
     object::put(ctx, parts, body, rid).await
 }
 
@@ -524,13 +527,9 @@ pub fn routes() -> Routes {
 
 /// The trailing-slash form of a bucket path, registered straight on the axum router.
 ///
-/// Clients send both `/{bucket}` and `/{bucket}/` — botocore's own URL builder appends the slash
-/// for a bucket-level request — and to axum those are different routes. loco's `Routes` refuses the
-/// second as a duplicate of the first, so it is added here instead.
+/// Clients send both `/{bucket}` and `/{bucket}/` — botocore's own URL builder appends the slash for a bucket-level request — and to axum those are different routes. loco's `Routes` refuses the second as a duplicate of the first, so it is added here instead.
 ///
-/// Normalising the path in a layer would be the obvious alternative and is wrong: the client signed
-/// the URI it sent, so trimming the slash before verification turns every such request into
-/// `SignatureDoesNotMatch`.
+/// Normalising the path in a layer would be the obvious alternative and is wrong: the client signed the URI it sent, so trimming the slash before verification turns every such request into `SignatureDoesNotMatch`.
 pub fn trailing_slash_bucket_router(ctx: AppContext) -> axum::Router {
     axum::Router::new()
         .route(

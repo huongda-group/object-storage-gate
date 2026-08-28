@@ -71,6 +71,29 @@ async fn a_source_outside_the_prefix_is_refused() {
     .await;
 }
 
+/// A key that may write but not read cannot use a copy to read: the source end needs the same `read` grant a `GetObject` of that object would need.
+#[tokio::test]
+#[serial]
+async fn a_key_without_read_cannot_copy() {
+    with_gateway(|g| async move {
+        let signer = g.key_with(&["write", "list"], &[]).await;
+        g.seed_objects("media-cdn", &["img/a.png"]).await;
+
+        let res = g
+            .put_with(
+                &signer,
+                "/media-cdn/img/b.png",
+                b"",
+                &[("x-amz-copy-source", "/media-cdn/img/a.png")],
+            )
+            .await;
+
+        assert_eq!(res.status_code(), 403, "{}", res.text());
+        g.mock.assert_untouched();
+    })
+    .await;
+}
+
 /// Another user's bucket is not a valid source: `resolve_copy_source` scopes to the caller's account.
 #[tokio::test]
 #[serial]

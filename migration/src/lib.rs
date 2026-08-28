@@ -1,6 +1,8 @@
 #![allow(elided_lifetimes_in_paths)]
 #![allow(clippy::wildcard_imports)]
 pub use sea_orm_migration::prelude::*;
+mod mysql_timestamps;
+
 mod m20220101_000001_users;
 mod m20260724_000001_users_account;
 mod m20260724_000002_buckets;

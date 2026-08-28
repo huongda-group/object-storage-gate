@@ -17,9 +17,8 @@ const IDENTIFIER_COLUMNS: &[(&str, &str, u32)] = &[
 impl MigrationTrait for Migration {
     async fn up(&self, m: &SchemaManager) -> Result<(), DbErr> {
         // Postgres and SQLite already compare these byte for byte.
-        // MySQL 8 defaults to utf8mb4_0900_ai_ci, which folds case and accents, so PUT Photos/A.JPG
-        // followed by PUT photos/a.jpg collides on the unique index and one object silently
-        // overwrites the other. S3 object keys are case-sensitive.
+        // MySQL 8 defaults to utf8mb4_0900_ai_ci, which folds case and accents, so PUT Photos/A.JPG followed by PUT photos/a.jpg collides on the unique index and one object silently overwrites the other.
+        // S3 object keys are case-sensitive.
         //
         // Raw SQL is unavoidable here: sea-query has no API for a collation on modify_column.
         if !matches!(m.get_database_backend(), DatabaseBackend::MySql) {

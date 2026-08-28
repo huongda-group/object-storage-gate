@@ -23,7 +23,8 @@ pub const ACTION_PRESIGNED: &str = "presigned";
 
 /// Whether `prefix` authorises `key`.
 ///
-/// A prefix must land on a path boundary. Without that rule a key scoped to `team` also authorises `teamsecret/`, which is a different tenant's folder as far as the person who issued the key is concerned.
+/// A prefix must land on a path boundary.
+/// Without that rule a key scoped to `team` also authorises `teamsecret/`, which is a different tenant's folder as far as the person who issued the key is concerned.
 #[must_use]
 pub fn prefix_allows(prefix: &str, key: &str) -> bool {
     key.starts_with(prefix)
@@ -356,7 +357,8 @@ impl Model {
         Self::reload(db, self.id).await
     }
 
-    /// Permanent. The row stays for audit; only the status changes.
+    /// Permanent.
+    /// The row stays for audit; only the status changes.
     /// Idempotent: revoking an already-revoked key is not an error, because containing an incident is exactly when someone clicks twice.
     ///
     /// # Errors
@@ -385,7 +387,8 @@ impl Model {
     /// Issue a replacement key with the same policy and disable this one.
     /// The old key is disabled rather than revoked so a running app has a window to swap its config.
     ///
-    /// Disables first, then creates. The other order left a live replacement behind whenever the second write failed, and the caller got an `Err` so nobody ever saw its secret.
+    /// Disables first, then creates.
+    /// The other order left a live replacement behind whenever the second write failed, and the caller got an `Err` so nobody ever saw its secret.
     ///
     /// # Errors
     /// Returns an error when the key is revoked or expired, or on DB failure.

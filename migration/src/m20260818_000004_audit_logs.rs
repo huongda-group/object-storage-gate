@@ -48,18 +48,14 @@ impl MigrationTrait for Migration {
         }
 
         if matches!(m.get_database_backend(), DatabaseBackend::MySql) {
-            // A new TIMESTAMP column on MySQL defaults to precision 0 and rounds to the second, so two requests 100ms apart would share a timestamp and the order of events in an incident would be lost.
-            // m20260815_000001 only widened columns that existed when it ran.
-            m.get_connection()
-                .execute_unprepared(
-                    "ALTER TABLE audit_logs MODIFY occurred_at TIMESTAMP(6) NOT NULL",
-                )
-                .await?;
             // An object key is up to 1024 bytes; ColType::String is varchar(255) here.
             m.get_connection()
                 .execute_unprepared("ALTER TABLE audit_logs MODIFY object_key VARCHAR(1024) NULL")
                 .await?;
         }
+
+        // occurred_at, plus create_table's own created_at/updated_at, are precision 0 on MySQL and round to the second, so two requests 100ms apart would share a timestamp and the order of events in an incident would be lost.
+        crate::mysql_timestamps::widen_all(m).await?;
         Ok(())
     }
 

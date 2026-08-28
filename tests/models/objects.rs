@@ -89,8 +89,7 @@ async fn list_by_prefix_filters() {
 }
 
 /// A LIKE wildcard in the prefix must match literally, not as a pattern.
-/// Once access-key prefix scoping is wired to this query, an unescaped `_` lets a key
-/// confined to `tenants/a/` read `tenants/ab/`, and `%` lists the whole bucket.
+/// Once access-key prefix scoping is wired to this query, an unescaped `_` lets a key confined to `tenants/a/` read `tenants/ab/`, and `%` lists the whole bucket.
 #[tokio::test]
 #[serial]
 async fn list_by_prefix_treats_wildcards_literally() {

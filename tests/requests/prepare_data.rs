@@ -53,7 +53,8 @@ pub async fn init_user_login(request: &TestServer, ctx: &AppContext) -> LoggedIn
     LoggedInUser { user, token }
 }
 
-/// An admin account, logged in. Used by the tests that exercise the admin tree.
+/// An admin account, logged in.
+/// Used by the tests that exercise the admin tree.
 pub async fn init_admin_login(request: &TestServer, ctx: &AppContext) -> LoggedInUser {
     let user = create_user(
         ctx,
@@ -68,7 +69,8 @@ pub async fn init_admin_login(request: &TestServer, ctx: &AppContext) -> LoggedI
     LoggedInUser { user, token }
 }
 
-/// A pool for tests that need to create a bucket. Returns the model, whose `pid` goes in the request body.
+/// A pool for tests that need to create a bucket.
+/// Returns the model, whose `pid` goes in the request body.
 pub async fn a_pool(ctx: &AppContext) -> pools::Model {
     pools::Model::create(
         &ctx.db,

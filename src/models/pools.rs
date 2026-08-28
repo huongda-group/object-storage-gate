@@ -56,7 +56,8 @@ pub struct UpdateParams {
     pub api_endpoint: Option<String>,
     pub physical_bucket: Option<String>,
     pub access_id: Option<String>,
-    /// `None` means keep the stored secret. The admin form never echoes it back, so an empty field must mean unchanged, never erase.
+    /// `None` means keep the stored secret.
+    /// The admin form never echoes it back, so an empty field must mean unchanged, never erase.
     pub access_secret: Option<String>,
 }
 

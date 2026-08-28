@@ -14,7 +14,8 @@ const PAT_PREFIX_LEN: usize = 12;
 
 /// Builds a fresh personal access token and its stored representation.
 ///
-/// Returns `(plaintext, prefix, hash)`. The plaintext leaves the process exactly once, at rotation; the column holds only the hash.
+/// Returns `(plaintext, prefix, hash)`.
+/// The plaintext leaves the process exactly once, at rotation; the column holds only the hash.
 ///
 /// # Errors
 ///
@@ -363,7 +364,7 @@ impl Model {
 
     /// Deletes a user together with everything they own.
     ///
-    /// The buckets foreign key is `ON DELETE SET NULL`, so a bare user delete would leave their bucket behind as a system pool, still carrying the encrypted upstream credentials and every object in it.
+    /// The buckets foreign key is `ON DELETE SET NULL`, so a bare user delete would leave their bucket behind with no owner, still bound to its pool and still holding every object in it.
     /// Objects cascade from their bucket, so deleting the buckets takes them too.
     ///
     /// # Errors

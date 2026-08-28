@@ -17,7 +17,8 @@ use crate::{
 /// A response body, handed back without being read into memory.
 pub type BoxBody = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
 
-/// How long a control request may take. Streamed uploads are deliberately exempt — see `Client::send`.
+/// How long a control request may take.
+/// Streamed uploads are deliberately exempt — see `Client::send`.
 fn control_timeout() -> Duration {
     static MS: OnceLock<u64> = OnceLock::new();
     Duration::from_millis(*MS.get_or_init(|| {
@@ -48,7 +49,8 @@ pub enum Body {
     Bytes(Vec<u8>),
     /// The streaming case: nothing is buffered, and the payload hash is `UNSIGNED-PAYLOAD`.
     ///
-    /// The length is not optional. `reqwest::Body::wrap_stream` reports no size, so reqwest frames the request `Transfer-Encoding: chunked` — and S3, R2 and `MinIO` all answer 411 `MissingContentLength` to a chunked `PutObject`.
+    /// The length is not optional.
+    /// `reqwest::Body::wrap_stream` reports no size, so reqwest frames the request `Transfer-Encoding: chunked` — and S3, R2 and `MinIO` all answer 411 `MissingContentLength` to a chunked `PutObject`.
     /// That failure is invisible against a mock upstream and only shows up against a real store.
     Stream {
         body: BoxBody,
@@ -206,7 +208,8 @@ impl Client {
         })
     }
 
-    /// Signs and sends. The response body is handed back as a stream.
+    /// Signs and sends.
+    /// The response body is handed back as a stream.
     ///
     /// # Errors
     /// `Upstream` for a 4xx the client can act on, `InternalError` for a 5xx or a transport failure — an upstream that is having a bad day is not the client's fault and its detail is not the client's business.
@@ -218,7 +221,8 @@ impl Client {
         let (payload_hash, streamed) = match &req.body {
             Body::Empty => (sigv4::EMPTY_PAYLOAD_SHA256.to_string(), false),
             Body::Bytes(b) => (hex::encode(Sha256::digest(b)), false),
-            // A streamed body cannot be hashed before it is sent. S3, R2 and MinIO all accept UNSIGNED-PAYLOAD over HTTPS; a provider that does not would fail every write at once, which is at least easy to diagnose.
+            // A streamed body cannot be hashed before it is sent.
+            // S3, R2 and MinIO all accept UNSIGNED-PAYLOAD over HTTPS; a provider that does not would fail every write at once, which is at least easy to diagnose.
             Body::Stream { .. } => (sigv4::UNSIGNED_PAYLOAD.to_string(), true),
         };
 
@@ -267,7 +271,8 @@ impl Client {
             }
         }
         builder = builder.header("authorization", authorization);
-        // The timeout covers control operations only. Applying one to a streamed upload would cap how long a legitimate 5 GiB PUT may take, which breaks the feature it is meant to protect.
+        // The timeout covers control operations only.
+        // Applying one to a streamed upload would cap how long a legitimate 5 GiB PUT may take, which breaks the feature it is meant to protect.
         if !streamed {
             builder = builder.timeout(control_timeout());
         }
@@ -357,7 +362,8 @@ impl Client {
 
     /// Turns an upstream failure into something the client can act on, without forwarding anything that names the physical layout.
     ///
-    /// The `<Code>` survives because clients branch on it. The body does not: it carries the physical bucket and key.
+    /// The `<Code>` survives because clients branch on it.
+    /// The body does not: it carries the physical bucket and key.
     fn classify(status: u16, body: &str) -> S3Error {
         if status >= 500 {
             tracing::error!(status, body = %body, "upstream returned a server error");

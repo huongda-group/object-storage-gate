@@ -17,9 +17,7 @@ macro_rules! configure_insta {
 
 /// Every route the mail flows used to own must be gone from the router.
 ///
-/// The SPA static fallback answers unmatched GETs, so an unrouted POST comes back as 405
-/// rather than 404; either one means nothing handles the path any more, and a 2xx would
-/// mean the endpoint is still live.
+/// The SPA static fallback answers unmatched GETs, so an unrouted POST comes back as 405 rather than 404; either one means nothing handles the path any more, and a 2xx would mean the endpoint is still live.
 #[tokio::test]
 #[serial]
 async fn removed_mail_routes_are_gone() {
@@ -44,8 +42,7 @@ async fn removed_mail_routes_are_gone() {
             );
         }
 
-        // The token routes were GETs, and a GET falls through to the SPA index instead of the
-        // handler, so assert on the body rather than on the status.
+        // The token routes were GETs, and a GET falls through to the SPA index instead of the handler, so assert on the body rather than on the status.
         for path in ["/api/auth/verify/anything", "/api/auth/magic-link/anything"] {
             let res = request.get(path).await;
             assert!(

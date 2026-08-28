@@ -1,7 +1,6 @@
 //! Admin-only audit read.
 //!
-//! Read-only on purpose: an audit log an operator can edit is not one anybody can rely on, and
-//! retention is the job of the `cleanup_audit` task rather than of a delete button.
+//! Read-only on purpose: an audit log an operator can edit is not one anybody can rely on, and retention is the job of the `cleanup_audit` task rather than of a delete button.
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 

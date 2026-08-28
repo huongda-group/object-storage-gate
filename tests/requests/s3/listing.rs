@@ -370,10 +370,8 @@ async fn head_bucket_works_with_a_scoped_key() {
 
 /// `GET /{bucket}/` — the trailing-slash form botocore's own URL builder produces.
 ///
-/// axum routes `/{bucket}` and `/{bucket}/` separately and loco refuses to register both, so this
-/// one is added straight on the router. Without it the request matches nothing, falls through to
-/// the console, and a `ListObjectsV2` comes back as a page of HTML — which the conformance suite
-/// found and no Rust test did.
+/// axum routes `/{bucket}` and `/{bucket}/` separately and loco refuses to register both, so this one is added straight on the router.
+/// Without it the request matches nothing, falls through to the console, and a `ListObjectsV2` comes back as a page of HTML — which the conformance suite found and no Rust test did.
 #[tokio::test]
 #[serial]
 async fn the_trailing_slash_bucket_form_lists_too() {

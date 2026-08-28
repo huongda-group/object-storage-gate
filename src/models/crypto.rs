@@ -54,7 +54,8 @@ fn master_key() -> &'static Key<Aes256Gcm> {
 /// Blobs written before this existed start straight with the nonce, and `decrypt` falls back to that layout.
 pub const ENVELOPE_V1: u8 = 1;
 
-/// Encrypt a secret for storage. Layout: `version || nonce || ciphertext || tag`.
+/// Encrypt a secret for storage.
+/// Layout: `version || nonce || ciphertext || tag`.
 ///
 /// # Panics
 ///
@@ -73,7 +74,8 @@ pub fn encrypt(plaintext: &str) -> Vec<u8> {
     out
 }
 
-/// Decrypt a stored secret. Fails on truncated or tampered input.
+/// Decrypt a stored secret.
+/// Fails on truncated or tampered input.
 ///
 /// Tries the current key first, then `OSG_MASTER_KEY_PREVIOUS` when it is set, so a key rotation can read old rows while new writes use the new key.
 /// Accepts both the versioned layout and the original `nonce || ciphertext || tag` one.

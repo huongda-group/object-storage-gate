@@ -22,9 +22,7 @@ async fn a_key(db: &sea_orm::DatabaseConnection, user_id: i32) -> (access_keys::
 
 /// The guard must live in the UPDATE, not in a snapshot read beforehand.
 ///
-/// Reproduces the window an admin actually hits: the console loaded the key, the admin
-/// revoked it, and the console's pending PATCH then reactivated a key that was supposed to
-/// be dead.
+/// Reproduces the window an admin actually hits: the console loaded the key, the admin revoked it, and the console's pending PATCH then reactivated a key that was supposed to be dead.
 #[tokio::test]
 #[serial]
 async fn a_revoked_key_cannot_be_reactivated_from_a_stale_model() {
@@ -52,8 +50,7 @@ async fn a_revoked_key_cannot_be_reactivated_from_a_stale_model() {
     assert_eq!(all[0].key.status, access_keys::KEY_REVOKED);
 }
 
-/// Rotating a key revoked in the meantime must fail without leaving a live replacement whose
-/// secret nobody ever saw.
+/// Rotating a key revoked in the meantime must fail without leaving a live replacement whose secret nobody ever saw.
 #[tokio::test]
 #[serial]
 async fn a_revoked_key_cannot_be_rotated_from_a_stale_model() {
@@ -77,8 +74,7 @@ async fn a_revoked_key_cannot_be_rotated_from_a_stale_model() {
     assert_eq!(all.len(), 1, "rotate left an orphan key behind");
 }
 
-/// Revoking twice is not an error: it is the thing you do when containing an incident, and
-/// a second click must not fail.
+/// Revoking twice is not an error: it is the thing you do when containing an incident, and a second click must not fail.
 #[tokio::test]
 #[serial]
 async fn revoking_twice_is_idempotent() {
@@ -99,8 +95,7 @@ async fn revoking_twice_is_idempotent() {
 }
 
 /// Two writes to the same key must both succeed; the second overwrites the first.
-/// The old read-then-insert let both see no row and both insert, and one hit the unique index
-/// with a 500 — which S3 clients trigger routinely, because retrying is what they do.
+/// The old read-then-insert let both see no row and both insert, and one hit the unique index with a 500 — which S3 clients trigger routinely, because retrying is what they do.
 #[tokio::test]
 #[serial]
 async fn concurrent_put_object_on_the_same_key_does_not_error() {

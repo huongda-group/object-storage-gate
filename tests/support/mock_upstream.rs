@@ -139,7 +139,8 @@ impl MockUpstream {
         }
     }
 
-    /// Queues one response. Requests beyond the queue get 200 with an empty body.
+    /// Queues one response.
+    /// Requests beyond the queue get 200 with an empty body.
     pub fn push(&self, canned: Canned) {
         self.shared.canned.lock().unwrap().push(canned);
     }
@@ -164,7 +165,8 @@ impl MockUpstream {
 
     /// Asserts the physical key the gateway addressed, which is the rewrite under test.
     ///
-    /// Compares decoded paths: what is under test is which object was addressed, not how it was spelled on the wire. The encoding itself is covered by the `SigV4` vectors.
+    /// Compares decoded paths: what is under test is which object was addressed, not how it was spelled on the wire.
+    /// The encoding itself is covered by the `SigV4` vectors.
     pub fn assert_key(&self, n: usize, expected: &str) {
         let seen = self.requests();
         let got = seen

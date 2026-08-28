@@ -121,7 +121,8 @@ async fn the_s3_catch_all_does_not_shadow_the_management_api() {
             res.status_code()
         );
 
-        // The console still owns `/` for an unsigned request. ListBuckets is routed there too, but S3 has no anonymous ListBuckets, so credentials are what tells the two apart.
+        // The console still owns `/` for an unsigned request.
+        // ListBuckets is routed there too, but S3 has no anonymous ListBuckets, so credentials are what tells the two apart.
         let res = g.raw_get("/", &[]).await;
         assert_eq!(res.status_code(), 200);
         assert!(!res.text().contains("<Error><Code>"), "{}", res.text());

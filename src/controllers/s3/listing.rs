@@ -1,7 +1,6 @@
 //! Listing, served entirely from the database.
 //!
-//! No upstream call: "quota is DB-driven, never bucket-scanned" applies to listing too, and a
-//! `ListObjectsV2` that asked the store would make every page cost a round trip to it.
+//! No upstream call: "quota is DB-driven, never bucket-scanned" applies to listing too, and a `ListObjectsV2` that asked the store would make every page cost a round trip to it.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 use crate::s3::error::S3Error;
@@ -28,16 +27,12 @@ pub struct Page {
 
 /// Groups a page of keys into `Contents` and `CommonPrefixes`.
 ///
-/// The delimiter is searched in the part of the key *after* the prefix. Searching from the start
-/// of the key would roll everything under `img/` into the single entry `img/` when that is the
-/// prefix being listed.
+/// The delimiter is searched in the part of the key *after* the prefix.
+/// Searching from the start of the key would roll everything under `img/` into the single entry `img/` when that is the prefix being listed.
 ///
-/// A common prefix counts against `limit` the same as a key does, because S3's `KeyCount` is the
-/// sum of both and a client sizing its buffer from it would under-allocate otherwise.
+/// A common prefix counts against `limit` the same as a key does, because S3's `KeyCount` is the sum of both and a client sizing its buffer from it would under-allocate otherwise.
 ///
-/// `next_token` is the last key *consumed*, not the last key emitted in `Contents`: a page that
-/// ended part-way through a roll-up must resume after the whole group, or the next page repeats
-/// the common prefix and the client sees the folder twice.
+/// `next_token` is the last key *consumed*, not the last key emitted in `Contents`: a page that ended part-way through a roll-up must resume after the whole group, or the next page repeats the common prefix and the client sees the folder twice.
 #[must_use]
 pub fn roll_up(rows: Vec<Row>, prefix: &str, delimiter: Option<char>, limit: u64) -> Page {
     let mut page = Page::default();
@@ -83,16 +78,14 @@ pub fn roll_up(rows: Vec<Row>, prefix: &str, delimiter: Option<char>, limit: u64
 
 /// Base64 of the resume key.
 ///
-/// S3's token is opaque and clients must not parse it; encoding keeps anyone from depending on its
-/// shape, and it survives a key containing characters that would break a bare query parameter.
+/// S3's token is opaque and clients must not parse it; encoding keeps anyone from depending on its shape, and it survives a key containing characters that would break a bare query parameter.
 #[must_use]
 pub fn encode_token(key: &str) -> String {
     URL_SAFE_NO_PAD.encode(key.as_bytes())
 }
 
 /// # Errors
-/// `InvalidArgument` when the token is not the shape this gateway issued — a client that
-/// hand-crafts one gets a clear refusal rather than a silently wrong page.
+/// `InvalidArgument` when the token is not the shape this gateway issued — a client that hand-crafts one gets a clear refusal rather than a silently wrong page.
 pub fn decode_token(token: &str) -> Result<String, S3Error> {
     let bytes = URL_SAFE_NO_PAD
         .decode(token.as_bytes())
@@ -103,21 +96,18 @@ pub fn decode_token(token: &str) -> Result<String, S3Error> {
 
 /// Whether this key's prefix policy allows listing `prefix`.
 ///
-/// A key with no prefixes may list anything. A scoped key may list only a prefix that is at or
-/// below one of its own: with `img/` allowed, `img/` and `img/2026/` are fine, `im` and the empty
-/// prefix are not — listing `im` would return `img/...` and disclose the folder structure the
-/// scope exists to fence off.
+/// A key with no prefixes may list anything.
+/// A scoped key may list only a prefix that is at or below one of its own: with `img/` allowed, `img/` and `img/2026/` are fine, `im` and the empty prefix are not — listing `im` would return `img/...` and disclose the folder structure the scope exists to fence off.
 ///
-/// The check is on the requested prefix rather than on the rows that came back. Filtering
-/// afterwards means the query already read keys the caller may not see, and one missed filter is a
-/// disclosure.
+/// The check is on the requested prefix rather than on the rows that came back.
+/// Filtering afterwards means the query already read keys the caller may not see, and one missed filter is a disclosure.
 #[must_use]
 pub fn may_list(allowed: &[String], prefix: &str) -> bool {
     if allowed.is_empty() {
         return true;
     }
-    // One condition, not two. An earlier version also allowed `prefix.starts_with(a)`, which is
-    // the same shape as the separator bug P3 fixed: with `img` allowed it let `imgsecret/` through.
+    // One condition, not two.
+    // An earlier version also allowed `prefix.starts_with(a)`, which is the same shape as the separator bug P3 fixed: with `img` allowed it let `imgsecret/` through.
     // `prefix_allows` already covers at-or-below, and it enforces the separator.
     allowed
         .iter()
@@ -242,8 +232,8 @@ async fn list_objects_v2_inner(ctx: &AppContext, parts: &Parts) -> Result<String
     ))
 }
 
-/// `ListBuckets` needs no object action: a key with only `read` still enumerates its buckets, the
-/// same way an IAM key with `s3:ListAllMyBuckets` does. Authentication alone is the gate.
+/// `ListBuckets` needs no object action: a key with only `read` still enumerates its buckets, the same way an IAM key with `s3:ListAllMyBuckets` does.
+/// Authentication alone is the gate.
 pub async fn list_buckets(ctx: &AppContext, parts: &Parts, rid: &str) -> Response {
     match list_buckets_inner(ctx, parts).await {
         Ok(body) => xml::ok_xml(body, rid),

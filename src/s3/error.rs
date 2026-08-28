@@ -11,7 +11,8 @@ pub enum S3Error {
     InvalidAccessKeyId,
     SignatureDoesNotMatch,
     RequestTimeTooSkewed,
-    /// Non-standard. The one code S3 has no equivalent for; marked `gateway_only` in the conformance suite.
+    /// Non-standard.
+    /// The one code S3 has no equivalent for; marked `gateway_only` in the conformance suite.
     QuotaExceeded,
     NoSuchBucket,
     NoSuchKey,
@@ -150,7 +151,8 @@ mod tests {
 
     #[test]
     fn every_variant_has_a_code_and_a_status() {
-        // Spec §12. A wrong status here is a client that retries when it should not, or gives up when it should retry.
+        // Spec §12.
+        // A wrong status here is a client that retries when it should not, or gives up when it should retry.
         let cases = [
             (S3Error::AccessDenied, "AccessDenied", 403),
             (S3Error::InvalidAccessKeyId, "InvalidAccessKeyId", 403),

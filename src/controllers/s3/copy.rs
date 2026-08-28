@@ -1,7 +1,7 @@
 //! `CopyObject` and `UploadPartCopy`.
 //!
-//! Both ends of a copy go through the same resolver. Two ends checked by two different pieces of
-//! code is the classic way one of them ends up unchecked.
+//! Both ends of a copy go through the same resolver.
+//! Two ends checked by two different pieces of code is the classic way one of them ends up unchecked.
 use axum::{http::request::Parts, response::Response};
 use loco_rs::prelude::*;
 
@@ -34,9 +34,8 @@ fn etag_header(res: &upstream::UpstreamResponse) -> String {
 
 /// The `ETag` a copy produced.
 ///
-/// `CopyObject` and `UploadPartCopy` both put it in the response *body*, not in a header — a store
-/// that also sets the header is being generous. Reading only the header hands the client an empty
-/// `ETag`, and the failure lands much later: `CompleteMultipartUpload` rejects the part list.
+/// `CopyObject` and `UploadPartCopy` both put it in the response *body*, not in a header — a store that also sets the header is being generous.
+/// Reading only the header hands the client an empty `ETag`, and the failure lands much later: `CompleteMultipartUpload` rejects the part list.
 async fn etag_of(res: upstream::UpstreamResponse) -> String {
     let header = etag_header(&res);
     let body = {
@@ -83,14 +82,14 @@ async fn copy_object_inner(ctx: &AppContext, parts: &Parts) -> Result<String, S3
     let pending =
         objects::Model::begin_put(&ctx.db, dest.bucket.id, &dest.logical_key, row.size).await?;
 
-    // The header must be rewritten to the physical source. Forwarding the client's logical value makes the store look for a key it has never had, and the failure comes back as NoSuchKey — which reads as "your object is missing", not as "the gateway forgot to rewrite".
+    // The header must be rewritten to the physical source.
+    // Forwarding the client's logical value makes the store look for a key it has never had, and the failure comes back as NoSuchKey — which reads as "your object is missing", not as "the gateway forgot to rewrite".
     let mut headers = vec![(
         "x-amz-copy-source".to_string(),
         format!("/{}/{}", dest.pool.physical_bucket, source.physical_key),
     )];
-    // COPY keeps the source's metadata, REPLACE takes the request's. Dropping the directive turns a
-    // legal metadata-only update into a self-copy the store refuses as InvalidRequest, and the client
-    // is told its own request was illegal.
+    // COPY keeps the source's metadata, REPLACE takes the request's.
+    // Dropping the directive turns a legal metadata-only update into a self-copy the store refuses as InvalidRequest, and the client is told its own request was illegal.
     if let Some(directive) = parts
         .headers
         .get("x-amz-metadata-directive")

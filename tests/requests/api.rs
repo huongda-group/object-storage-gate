@@ -5,7 +5,8 @@ use serial_test::serial;
 
 use super::prepare_data;
 
-/// Mint an account PAT, the way the /api page does. The token is shown once, at rotation.
+/// Mint an account PAT, the way the /api page does.
+/// The token is shown once, at rotation.
 async fn pat(request: &TestServer, token: &str) -> String {
     let (ak, av) = prepare_data::auth_header(token);
     let res = request.post("/api/token/rotate").add_header(ak, av).await;
@@ -218,8 +219,7 @@ async fn change_password_rejects_short_password() {
     .await;
 }
 
-/// loco's default body limit is 2 MB, which would reject every real S3 upload once the
-/// gateway lands, including every multipart part (5 MB minimum per the S3 spec).
+/// loco's default body limit is 2 MB, which would reject every real S3 upload once the gateway lands, including every multipart part (5 MB minimum per the S3 spec).
 /// A 413 here means the middleware ate the body before any handler saw it.
 #[tokio::test]
 #[serial]

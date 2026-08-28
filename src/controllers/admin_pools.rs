@@ -1,6 +1,7 @@
 //! Admin-only pool management, plus the one reduced listing a non-admin needs.
 //!
-//! A pool is the upstream store a bucket proxies to. Without at least one configured pool the gateway cannot serve a single S3 request, so this tree is a prerequisite for the whole data plane.
+//! A pool is the upstream store a bucket proxies to.
+//! Without at least one configured pool the gateway cannot serve a single S3 request, so this tree is a prerequisite for the whole data plane.
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +29,8 @@ pub struct UpdateBody {
     pub api_endpoint: Option<String>,
     pub physical_bucket: Option<String>,
     pub access_id: Option<String>,
-    /// Absent means keep the stored secret. The form never echoes it back, so absent cannot mean erase.
+    /// Absent means keep the stored secret.
+    /// The form never echoes it back, so absent cannot mean erase.
     pub access_secret: Option<String>,
 }
 

@@ -64,15 +64,11 @@ async fn abort_one(ctx: &AppContext, upload: &multipart_uploads::Model) -> Resul
 
     // The store is told first: dropping the row before the store has forgotten the parts leaves them paid for by nobody and invisible to everything.
     let client = upstream::Client::new(&pool).map_err(|e| Error::string(&e.to_string()))?;
+    // A missing owner is fatal rather than an empty pid: the abort would go to a path no upload was ever stored under, and the quota release afterwards would then be charging the store for parts it still holds.
     let user = crate::models::users::Model::find_by_id(&ctx.db, bucket.user_id.unwrap_or_default())
         .await
-        .ok();
-    let physical = format!(
-        "{}/{}/{}",
-        user.map(|u| u.pid.to_string()).unwrap_or_default(),
-        bucket.name,
-        upload.object_key
-    );
+        .map_err(|_| Error::string("bucket owner is gone"))?;
+    let physical = crate::s3::request::physical_key_for(&user, &bucket, &upload.object_key);
 
     client
         .send(UpstreamRequest {

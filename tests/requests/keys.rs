@@ -168,8 +168,7 @@ async fn token_is_revealed_once_at_rotation_and_never_readable() {
         let user = prepare_data::init_user_login(&request, &ctx).await;
         let (ak, av) = prepare_data::auth_header(&user.token);
 
-        // There is no read endpoint: one that hands the token back turns any stolen JWT into
-        // a permanent credential that a password change does not evict.
+        // There is no read endpoint: one that hands the token back turns any stolen JWT into a permanent credential that a password change does not evict.
         // An unrouted GET falls through to the SPA index, so assert on the body, not the status.
         let gone = request
             .get("/api/token")

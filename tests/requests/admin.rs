@@ -72,8 +72,8 @@ async fn create_user_requires_max_bytes() {
             }))
             .await;
 
-        // Axum's Json extractor rejects a missing required field before the handler runs, so this
-        // is 422 rather than 400. Either way the point stands: max_bytes cannot be defaulted.
+        // Axum's Json extractor rejects a missing required field before the handler runs, so this is 422 rather than 400.
+        // Either way the point stands: max_bytes cannot be defaulted.
         assert_eq!(res.status_code(), 422);
     })
     .await;
@@ -307,8 +307,7 @@ async fn admin_can_delete_a_plain_user() {
 }
 
 /// Deleting an owner must take their buckets and objects with them.
-/// The foreign key is ON DELETE SET NULL, so without this the bucket reappears as a system
-/// pool still carrying the former owner's encrypted upstream credentials and every object.
+/// The foreign key is ON DELETE SET NULL, so without this the bucket reappears as a system pool still carrying the former owner's encrypted upstream credentials and every object.
 #[tokio::test]
 #[serial]
 async fn deleting_a_user_removes_their_buckets_and_objects() {

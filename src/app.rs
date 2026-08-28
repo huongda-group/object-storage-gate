@@ -80,9 +80,8 @@ impl Hooks for App {
             })?;
             crate::models::crypto::validate_master_key(&key)?;
 
-            // loco signs JWTs with `EncodingKey::from_base64_secret`, so a JWT_SECRET that is not
-            // valid base64 lets the app boot and then fails every single login with a generic
-            // "unauthorized!" — indistinguishable from a wrong password. Refuse at boot instead.
+            // loco signs JWTs with `EncodingKey::from_base64_secret`, so a JWT_SECRET that is not valid base64 lets the app boot and then fails every single login with a generic "unauthorized!" — indistinguishable from a wrong password.
+            // Refuse at boot instead.
             let jwt = ctx.config.get_jwt_config()?;
             STANDARD.decode(jwt.secret.trim()).map_err(|_| {
                 Error::string(
@@ -93,8 +92,7 @@ impl Hooks for App {
         Ok(ctx)
     }
 
-    // The trailing-slash bucket form cannot go through `Routes`: loco treats `/{bucket}/` as a
-    // duplicate of `/{bucket}` and panics, while axum routes them separately.
+    // The trailing-slash bucket form cannot go through `Routes`: loco treats `/{bucket}/` as a duplicate of `/{bucket}` and panics, while axum routes them separately.
     async fn after_routes(router: axum::Router, ctx: &AppContext) -> Result<axum::Router> {
         Ok(router.merge(controllers::s3::trailing_slash_bucket_router(ctx.clone())))
     }

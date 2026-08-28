@@ -95,8 +95,7 @@ async fn reserve_refuses_past_the_bucket_quota() {
     assert!(refused.unwrap_err().to_string().contains("quota exceeded"));
 }
 
-/// The account quota is the outer bound: a bucket with room must still be refused when the
-/// account has none, and the bucket-level hold must not be left behind.
+/// The account quota is the outer bound: a bucket with room must still be refused when the account has none, and the bucket-level hold must not be left behind.
 #[tokio::test]
 #[serial]
 async fn reserve_refuses_past_the_account_quota_and_rolls_the_bucket_back() {
@@ -546,7 +545,8 @@ async fn put_object_still_charges_exactly_once() {
 
 /// `record_put` is the multipart escape hatch: metadata only, quota untouched.
 ///
-/// This test exists to say the gap is deliberate. Nothing but `CompleteMultipartUpload` may call it, because every other caller would store bytes nobody is charged for.
+/// This test exists to say the gap is deliberate.
+/// Nothing but `CompleteMultipartUpload` may call it, because every other caller would store bytes nobody is charged for.
 #[tokio::test]
 #[serial]
 async fn record_put_writes_metadata_and_leaves_quota_alone() {

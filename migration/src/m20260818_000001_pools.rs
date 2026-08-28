@@ -29,6 +29,9 @@ impl MigrationTrait for Migration {
             &[],
         )
         .await?;
+
+        // create_table adds created_at/updated_at, which are precision 0 on MySQL and round to the second.
+        crate::mysql_timestamps::widen_all(m).await?;
         Ok(())
     }
 

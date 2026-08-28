@@ -99,7 +99,8 @@ impl PendingPut {
         Ok(row)
     }
 
-    /// Gives the hold back. Nothing was written, so there is nothing to undo.
+    /// Gives the hold back.
+    /// Nothing was written, so there is nothing to undo.
     ///
     /// # Errors
     /// Returns an error on DB failure.
@@ -147,7 +148,8 @@ impl Model {
 
     /// Insert a new object or overwrite the existing `(bucket_id, key)` row (`PutObject` semantics, versioning off).
     ///
-    /// For callers with nothing to do between the reservation and the write. The gateway uses `begin_put` instead, because the upstream upload goes in that gap.
+    /// For callers with nothing to do between the reservation and the write.
+    /// The gateway uses `begin_put` instead, because the upstream upload goes in that gap.
     ///
     /// # Errors
     /// Returns a `quota exceeded` error when there is no room, or a DB error.
@@ -165,7 +167,8 @@ impl Model {
 
     /// Writes metadata without touching quota.
     ///
-    /// Only the multipart path may use this. Multipart accumulates its reservation across many `UploadPart` requests, so no `PendingPut` can hold it and `CompleteMultipartUpload` owns the accounting itself (spec §10).
+    /// Only the multipart path may use this.
+    /// Multipart accumulates its reservation across many `UploadPart` requests, so no `PendingPut` can hold it and `CompleteMultipartUpload` owns the accounting itself (spec §10).
     /// Nothing else may call it: every other caller would silently store bytes nobody is charged for.
     ///
     /// # Errors

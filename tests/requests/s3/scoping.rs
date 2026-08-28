@@ -139,7 +139,8 @@ async fn auth_failures_map_to_the_right_codes() {
     with_gateway(|g| async move {
         let signer = g.full_key().await;
 
-        // Credentials presented but unusable. A request with no SigV4 credentials at all is a browser navigation and reaches the console instead — see `unauthenticated_get`.
+        // Credentials presented but unusable.
+        // A request with no SigV4 credentials at all is a browser navigation and reaches the console instead — see `unauthenticated_get`.
         let res = g.unauthenticated_get("/media-cdn/a.png").await;
         assert_eq!(res.status_code(), 403, "{}", res.text());
         assert!(res.text().contains("AccessDenied"), "{}", res.text());

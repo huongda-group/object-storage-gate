@@ -16,16 +16,13 @@ const NON_NEGATIVE: &[(&str, &str)] = &[
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, m: &SchemaManager) -> Result<(), DbErr> {
-        // A backstop, not the mechanism: the guarded UPDATEs in models::quota already refuse to go
-        // negative. This turns a future accounting bug into a write error instead of a negative
-        // number quietly served over the API.
+        // A backstop, not the mechanism: the guarded UPDATEs in models::quota already refuse to go negative.
+        // This turns a future accounting bug into a write error instead of a negative number quietly served over the API.
         //
-        // MySQL only enforces CHECK from 8.0.16; on 8.0.13–8.0.15 it parses and ignores it. The
-        // project floor is 8.0.13, so on those three patch versions this is decorative — acceptable
-        // for a backstop.
+        // MySQL only enforces CHECK from 8.0.16; on 8.0.13–8.0.15 it parses and ignores it.
+        // The project floor is 8.0.13, so on those three patch versions this is decorative — acceptable for a backstop.
         //
-        // SQLite cannot add a CHECK to an existing table without rebuilding it, which is not worth
-        // it for something the application layer already enforces.
+        // SQLite cannot add a CHECK to an existing table without rebuilding it, which is not worth it for something the application layer already enforces.
         if matches!(m.get_database_backend(), DatabaseBackend::Sqlite) {
             return Ok(());
         }

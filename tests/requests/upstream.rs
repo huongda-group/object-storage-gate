@@ -179,7 +179,8 @@ async fn a_response_body_streams_back() {
     assert_eq!(drain(res).await, b"the object bytes");
 }
 
-/// Spec §12: the upstream error body names the physical bucket. Keep the code, drop the body.
+/// Spec §12: the upstream error body names the physical bucket.
+/// Keep the code, drop the body.
 #[tokio::test]
 #[serial]
 async fn an_upstream_error_keeps_its_code_and_loses_its_body() {

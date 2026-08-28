@@ -4,8 +4,7 @@ use crate::models::_entities::audit_logs;
 
 /// The admin-facing shape of one audit entry.
 ///
-/// Lists fields by hand, like every other view here, so a column added to the table never leaks
-/// into a response by default.
+/// Lists fields by hand, like every other view here, so a column added to the table never leaks into a response by default.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AuditEntryResponse {
     pub pid: String,

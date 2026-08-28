@@ -33,8 +33,8 @@ pub fn escape(s: &str) -> String {
 #[must_use]
 pub fn error_body(err: &S3Error, resource: &str, request_id: &str) -> String {
     // S3 names the bucket and key separately as well as the resource, and clients read those:
-    // botocore surfaces them on the exception, and a suite that asserts on <Key> sees nothing
-    // without them. Both halves are the logical ones the client asked for.
+    // botocore surfaces them on the exception, and a suite that asserts on <Key> sees nothing without them.
+    // Both halves are the logical ones the client asked for.
     let trimmed = resource.trim_start_matches('/');
     let (bucket, key) = trimmed.split_once('/').unwrap_or((trimmed, ""));
 
@@ -61,9 +61,7 @@ pub fn error_body(err: &S3Error, resource: &str, request_id: &str) -> String {
 
 /// The S3 error code, carried in a response extension so the audit layer can read it.
 ///
-/// An extension rather than a header: it never reaches the wire, and the audit needs a code the
-/// status alone cannot supply — the same 403 covers a wrong signature, a missing permission and a
-/// full bucket.
+/// An extension rather than a header: it never reaches the wire, and the audit needs a code the status alone cannot supply — the same 403 covers a wrong signature, a missing permission and a full bucket.
 #[derive(Debug, Clone)]
 pub struct ErrorCode(pub String);
 
@@ -184,9 +182,8 @@ fn extract(text: &str, tag: &str) -> Vec<String> {
 
 /// Reverses `escape`, and also decodes the numeric entities other servers emit.
 ///
-/// `MinIO` writes a quoted `ETag` as `&#34;abc&#34;` rather than `&quot;abc&quot;`. Leaving those
-/// undecoded stores the entity text as part of the `ETag`, and the value the gateway hands back is
-/// then escaped again — so a client sees a literal `&#34;` where a quote belongs.
+/// `MinIO` writes a quoted `ETag` as `&#34;abc&#34;` rather than `&quot;abc&quot;`.
+/// Leaving those undecoded stores the entity text as part of the `ETag`, and the value the gateway hands back is then escaped again — so a client sees a literal `&#34;` where a quote belongs.
 #[must_use]
 pub fn unescape(s: &str) -> String {
     s.replace("&lt;", "<")
@@ -249,8 +246,7 @@ pub struct ListingRow<'a> {
 
 /// URL-encodes a key when the client asked for `encoding-type=url`.
 ///
-/// botocore sends it when a key can contain characters that XML cannot carry safely; without it a
-/// key holding a control character produces a document the client cannot parse.
+/// botocore sends it when a key can contain characters that XML cannot carry safely; without it a key holding a control character produces a document the client cannot parse.
 fn maybe_encode(value: &str, url_encode: bool) -> String {
     if url_encode {
         percent_encoding::utf8_percent_encode(value, LISTING_ENCODE).to_string()
@@ -270,8 +266,7 @@ const LISTING_ENCODE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHA
 /// Renders `ListBucketResult` in the tag order S3 uses.
 ///
 /// botocore parses by name, but some older clients do not, and matching the order costs nothing.
-/// `StorageClass` is always `STANDARD`: the gateway does not model storage classes, and omitting
-/// the tag makes some clients error.
+/// `StorageClass` is always `STANDARD`: the gateway does not model storage classes, and omitting the tag makes some clients error.
 #[must_use]
 pub fn list_objects_v2(
     view: &ListingView<'_>,
@@ -343,8 +338,7 @@ pub fn list_objects_v2(
 
 /// Renders `ListAllMyBucketsResult`.
 ///
-/// `Owner.DisplayName` is the account name, never its email: any access key of the account can
-/// read this response, including one handed to a third party, and the email does not belong in it.
+/// `Owner.DisplayName` is the account name, never its email: any access key of the account can read this response, including one handed to a third party, and the email does not belong in it.
 #[must_use]
 pub fn list_buckets(owner_id: &str, owner_name: &str, buckets: &[(String, String)]) -> String {
     let mut out = String::from(
@@ -384,7 +378,8 @@ pub fn initiate_multipart(bucket: &str, key: &str, upload_id: &str) -> String {
 
 /// Renders `CompleteMultipartUploadResult`.
 ///
-/// `Location` names the logical bucket and key only. A URL carrying the physical bucket would hand the client the layout the gateway exists to hide.
+/// `Location` names the logical bucket and key only.
+/// A URL carrying the physical bucket would hand the client the layout the gateway exists to hide.
 #[must_use]
 pub fn complete_multipart(bucket: &str, key: &str, etag: &str) -> String {
     format!(

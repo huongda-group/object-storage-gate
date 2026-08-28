@@ -1,8 +1,7 @@
 //! Multipart upload.
 //!
-//! The store keeps the parts. The gateway keeps two facts: which upstream `UploadId` a client's
-//! `UploadId` maps to, and how much quota the upload is holding so an abort gives back exactly
-//! that.
+//! The store keeps the parts.
+//! The gateway keeps two facts: which upstream `UploadId` a client's `UploadId` maps to, and how much quota the upload is holding so an abort gives back exactly that.
 use axum::{body::Body, http::request::Parts, response::Response};
 use loco_rs::prelude::*;
 
@@ -17,7 +16,8 @@ use crate::{
     },
 };
 
-/// Reads a whole upstream response body. Only used for the small XML answers multipart returns.
+/// Reads a whole upstream response body.
+/// Only used for the small XML answers multipart returns.
 async fn body_text(res: upstream::UpstreamResponse) -> String {
     use futures_util::StreamExt;
     let mut body = res.body;
@@ -343,8 +343,7 @@ fn parse_parts(text: &str) -> Vec<(u32, String, i64)> {
     out
 }
 
-/// `ListMultipartUploads` reads this gateway's own table: the store's answer would carry physical
-/// keys and would also list uploads belonging to other tenants in the same physical bucket.
+/// `ListMultipartUploads` reads this gateway's own table: the store's answer would carry physical keys and would also list uploads belonging to other tenants in the same physical bucket.
 pub async fn list_uploads(ctx: &AppContext, parts: &Parts, rid: &str) -> Response {
     match list_uploads_inner(ctx, parts).await {
         Ok(body) => xml::ok_xml(body, rid),

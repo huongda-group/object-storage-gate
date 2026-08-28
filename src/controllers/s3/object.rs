@@ -138,10 +138,9 @@ pub async fn head(ctx: &AppContext, parts: &Parts, rid: &str) -> Response {
 
 /// Headers forwarded from the client up to the store on a write.
 ///
-/// A whitelist, not a blacklist. `x-amz-acl`, `x-amz-server-side-encryption` and
-/// `x-amz-storage-class` are deliberately absent: forwarding one would let a client set a public
-/// ACL on an object inside the shared physical bucket, opening their data over a path the gateway
-/// knows nothing about. Spec §19 puts ACL and SSE out of scope.
+/// A whitelist, not a blacklist.
+/// `x-amz-acl`, `x-amz-server-side-encryption` and `x-amz-storage-class` are deliberately absent: forwarding one would let a client set a public ACL on an object inside the shared physical bucket, opening their data over a path the gateway knows nothing about.
+/// Spec §19 puts ACL and SSE out of scope.
 const FORWARD_ON_WRITE: &[&str] = &[
     "content-type",
     "content-encoding",
@@ -168,8 +167,7 @@ pub fn forwarded_write_headers(parts: &Parts) -> Vec<(String, String)> {
 
 /// The `Content-Length` a client declared.
 ///
-/// Required: the reservation needs a size before any byte moves, and a chunked body would have to
-/// be buffered to find out — which is the thing streaming exists to avoid.
+/// Required: the reservation needs a size before any byte moves, and a chunked body would have to be buffered to find out — which is the thing streaming exists to avoid.
 fn content_length(parts: &Parts) -> Result<i64, S3Error> {
     parts
         .headers
@@ -252,7 +250,8 @@ async fn put_inner(
             Ok(res)
         }
         Err(e) => {
-            // Give the hold straight back. A failed upload that keeps its reservation is a bucket that slowly refuses writes with nothing in the logs to explain it.
+            // Give the hold straight back.
+            // A failed upload that keeps its reservation is a bucket that slowly refuses writes with nothing in the logs to explain it.
             pending.abort(&ctx.db).await?;
             Err(e)
         }
@@ -285,14 +284,16 @@ async fn delete_inner(ctx: &AppContext, parts: &Parts) -> Result<(), S3Error> {
         .send(UpstreamRequest::delete(&req.physical_key))
         .await?;
 
-    // Metadata comes off after the store confirmed. The other order loses track of an object that still exists; this order can leave a row behind if the process dies here, which reconcile_quota fixes.
+    // Metadata comes off after the store confirmed.
+    // The other order loses track of an object that still exists; this order can leave a row behind if the process dies here, which reconcile_quota fixes.
     objects::Model::delete(&ctx.db, req.bucket.id, &req.logical_key).await?;
     Ok(())
 }
 
 /// `POST /{bucket}?delete` — the batch form.
 ///
-/// Authorisation is per key rather than up front: a batch has no single key for `resolve` to check a prefix against, and S3's batch semantics turn a refused key into one `<Error>` entry rather than a refusal of the whole request. A whole-request refusal would let one bad key undo 999 good ones.
+/// Authorisation is per key rather than up front: a batch has no single key for `resolve` to check a prefix against, and S3's batch semantics turn a refused key into one `<Error>` entry rather than a refusal of the whole request.
+/// A whole-request refusal would let one bad key undo 999 good ones.
 pub async fn delete_objects(ctx: &AppContext, parts: &Parts, body: Vec<u8>, rid: &str) -> Response {
     match delete_objects_inner(ctx, parts, body).await {
         Ok(xml) => crate::s3::xml::ok_xml(xml, rid),
@@ -331,11 +332,12 @@ async fn delete_objects_inner(
         return Ok(crate::s3::xml::delete_result(&[], &errors, quiet));
     }
 
-    // Only the authorised keys are rewritten, and only those reach the store. An implementation that authorises and then forwards the whole list passes every response assertion while still deleting data out of scope.
+    // Only the authorised keys are rewritten, and only those reach the store.
+    // An implementation that authorises and then forwards the whole list passes every response assertion while still deleting data out of scope.
     let client = upstream::Client::new(&req.pool)?;
     let mut upstream_body = String::from("<Delete><Quiet>true</Quiet>");
     for key in &allowed {
-        let physical = format!("{}/{}/{}", req.user.pid, req.bucket.name, key);
+        let physical = crate::s3::request::physical_key_for(&req.user, &req.bucket, key);
         let _ = write!(
             upstream_body,
             "<Object><Key>{}</Key></Object>",
@@ -344,9 +346,8 @@ async fn delete_objects_inner(
     }
     upstream_body.push_str("</Delete>");
 
-    // Content-MD5 is required on DeleteObjects and the store enforces it. The gateway sends its own
-    // body — only the authorised keys — so it has to compute the digest itself; forwarding the
-    // client's would describe a different document.
+    // Content-MD5 is required on DeleteObjects and the store enforces it.
+    // The gateway sends its own body — only the authorised keys — so it has to compute the digest itself; forwarding the client's would describe a different document.
     let bytes = upstream_body.into_bytes();
     let digest = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,

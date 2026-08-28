@@ -85,10 +85,9 @@ impl Initializer for RateLimitInitializer {
 
 /// Applies an inner layer to the management API only.
 ///
-/// The limiter exists to stop password guessing on `POST /api/auth/login`. Applying it to the S3
-/// data plane instead breaks the product: `aws s3 sync` of 1200 objects stops at the ~999th with
-/// a 429, and a multipart upload of a large file trips it too. The data plane is already gated by
-/// `SigV4` per access key, which is a stronger control than a per-IP bucket.
+/// The limiter exists to stop password guessing on `POST /api/auth/login`.
+/// Applying it to the S3 data plane instead breaks the product: `aws s3 sync` of 1200 objects stops at the ~999th with a 429, and a multipart upload of a large file trips it too.
+/// The data plane is already gated by `SigV4` per access key, which is a stronger control than a per-IP bucket.
 #[derive(Clone)]
 pub struct ApiOnly<L> {
     inner: L,

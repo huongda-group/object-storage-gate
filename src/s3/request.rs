@@ -85,7 +85,8 @@ fn payload_hash_of(parts: &Parts) -> Result<String, S3Error> {
     };
     let value = raw.to_str().map_err(|_| S3Error::AccessDenied)?;
     if value.starts_with("STREAMING-") {
-        // aws-chunked framing rewrites the body, so the gateway would have to de-frame it before it could proxy anything. Refusing is honest; mis-parsing the frames and storing them as object bytes is not.
+        // aws-chunked framing rewrites the body, so the gateway would have to de-frame it before it could proxy anything.
+        // Refusing is honest; mis-parsing the frames and storing them as object bytes is not.
         return Err(S3Error::NotImplemented(
             "aws-chunked payload signing (STREAMING-AWS4-HMAC-SHA256-PAYLOAD) is not supported by this gateway".to_string(),
         ));
@@ -179,7 +180,8 @@ impl S3Request {
     /// Verbs that address an object: authenticate, locate, validate, authorise, rewrite.
     ///
     /// # Errors
-    /// Every failure is an `S3Error` carrying the code a client can act on. See spec §6.
+    /// Every failure is an `S3Error` carrying the code a client can act on.
+    /// See spec §6.
     pub async fn resolve(ctx: &AppContext, parts: &Parts, action: &str) -> Result<Self, S3Error> {
         let (bucket_name, encoded_key) = split_path(parts.uri.path());
         let logical_key = decode_key(&encoded_key);
@@ -308,6 +310,16 @@ impl S3Request {
             .map_err(|_| S3Error::InternalError)?
             .ok_or(S3Error::NoSuchBucket)?;
 
+        // A copy reads the source, so the source end needs the read grant a `GetObject` of the same object would need.
+        // Checking only the prefix would let a write-only key copy an object it may not read.
+        if !self
+            .key
+            .allows_action(&ctx.db, access_keys::ACTION_READ)
+            .await
+            .map_err(|_| S3Error::InternalError)?
+        {
+            return Err(S3Error::AccessDenied);
+        }
         if !self
             .key
             .allows_key(&ctx.db, &logical_key)
@@ -326,8 +338,12 @@ impl S3Request {
     }
 }
 
-/// The one place a physical key is built. Every caller goes through `resolve` or `resolve_copy_source`, both of which authorise first.
-fn physical_key_for(user: &users::Model, bucket: &buckets::Model, logical_key: &str) -> String {
+/// The one place a physical key is built, so a change to the layout lands everywhere at once.
+///
+/// Most callers arrive through `resolve` or `resolve_copy_source`, which authorise first.
+/// Two do not: `DeleteObjects` rewrites each key it has already run `allows_key` over, and the multipart cleanup task acts on rows the gateway wrote itself.
+/// Anything else must authorise before it calls this.
+pub fn physical_key_for(user: &users::Model, bucket: &buckets::Model, logical_key: &str) -> String {
     format!("{}/{}/{}", user.pid, bucket.name, logical_key)
 }
 

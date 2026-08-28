@@ -108,8 +108,7 @@ async fn content_type_and_user_metadata_reach_upstream() {
 
 /// A header that changes how the store treats the object must not be forwarded.
 ///
-/// `x-amz-acl` is the one that matters: passing it through would let a client make their object
-/// public inside the shared physical bucket, over a path the gateway knows nothing about.
+/// `x-amz-acl` is the one that matters: passing it through would let a client make their object public inside the shared physical bucket, over a path the gateway knows nothing about.
 #[tokio::test]
 #[serial]
 async fn acl_and_encryption_headers_are_not_forwarded() {
@@ -267,7 +266,8 @@ async fn a_key_outside_the_prefix_becomes_an_error_entry() {
         assert!(body.contains("<Code>AccessDenied</Code>"), "{body}");
         assert!(body.contains("<Key>docs/b.pdf</Key>"), "{body}");
 
-        // The denied key must not appear in the upstream request at all. An implementation that authorises and then sends the whole list passes every response assertion while still deleting data out of scope.
+        // The denied key must not appear in the upstream request at all.
+        // An implementation that authorises and then sends the whole list passes every response assertion while still deleting data out of scope.
         let sent = String::from_utf8_lossy(&g.mock.requests().last().unwrap().body).to_string();
         assert!(
             !sent.contains("docs/b.pdf"),

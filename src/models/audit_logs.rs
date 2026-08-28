@@ -1,8 +1,6 @@
 //! What every S3 request left behind.
 //!
-//! `outcome` is stored separately from `status_code` because the same 403 covers a wrong
-//! signature, a missing permission and a full bucket — three different operational problems that
-//! a status-code parse cannot tell apart.
+//! `outcome` is stored separately from `status_code` because the same 403 covers a wrong signature, a missing permission and a full bucket — three different operational problems that a status-code parse cannot tell apart.
 use loco_rs::prelude::*;
 use sea_orm::{QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
@@ -27,8 +25,7 @@ pub const OUTCOME_ERROR: &str = "error";
 
 /// What the request path hands to the queue.
 ///
-/// Everything is owned and serialisable, because it crosses a queue boundary and the request it
-/// describes is long gone by the time it is written.
+/// Everything is owned and serialisable, because it crosses a queue boundary and the request it describes is long gone by the time it is written.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
     pub user_id: Option<i32>,
@@ -52,7 +49,8 @@ pub const fn outcome_for(status: u16) -> &'static str {
     match status {
         200..=399 => OUTCOME_OK,
         404 => OUTCOME_NOT_FOUND,
-        // Every other 4xx is a refusal. The specific S3 code is what separates a wrong signature from a full bucket, and the caller supplies that.
+        // Every other 4xx is a refusal.
+        // The specific S3 code is what separates a wrong signature from a full bucket, and the caller supplies that.
         400..=499 => OUTCOME_DENIED,
         _ => OUTCOME_ERROR,
     }

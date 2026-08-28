@@ -176,9 +176,8 @@ async fn audit_records_the_logical_key_not_the_physical_one() {
 
 /// A broken audit sink must not turn a good request into a 500.
 ///
-/// The table is dropped mid-test, which is the bluntest possible version of "the place audit goes
-/// is unavailable". If the request path treated that as fatal, an outage in a logging dependency
-/// would take the whole data plane with it.
+/// The table is dropped mid-test, which is the bluntest possible version of "the place audit goes is unavailable".
+/// If the request path treated that as fatal, an outage in a logging dependency would take the whole data plane with it.
 #[tokio::test]
 #[serial]
 async fn a_broken_audit_sink_does_not_fail_the_request() {

@@ -173,8 +173,8 @@ async fn list_for_user_excludes_other_owners() {
     assert_eq!(names, vec!["a-one", "a-two"]); // ordered by name
 }
 
-/// A bucket named after a path the gateway serves on would be created happily and then be
-/// unreachable over S3. Refusing at creation is the only point where that is visible.
+/// A bucket named after a path the gateway serves on would be created happily and then be unreachable over S3.
+/// Refusing at creation is the only point where that is visible.
 #[tokio::test]
 #[serial]
 async fn reserved_names_are_refused() {

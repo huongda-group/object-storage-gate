@@ -92,7 +92,8 @@ async fn release_bucket(db: &DatabaseConnection, bucket_id: i32, bytes: i64) -> 
 
 /// Holds `bytes` against a bucket and, when the bucket has an owner, against that owner's account.
 ///
-/// Both levels must succeed. When the account refuses, the bucket-level hold is given straight back, because a reservation nobody can commit is a slow leak that only the reconcile task would ever notice.
+/// Both levels must succeed.
+/// When the account refuses, the bucket-level hold is given straight back, because a reservation nobody can commit is a slow leak that only the reconcile task would ever notice.
 ///
 /// # Errors
 ///
@@ -326,7 +327,8 @@ pub async fn account_for_delete(
 // Ceiling: fine up to a few hundred thousand objects; past that use a grouped SUM query, which needs no lock either.
 /// Recomputes every stored total from the object rows.
 ///
-/// The counters are an optimisation; the object rows are the truth. A process that dies between reserve and commit leaves a hold that nothing will ever release, and this is what releases it.
+/// The counters are an optimisation; the object rows are the truth.
+/// A process that dies between reserve and commit leaves a hold that nothing will ever release, and this is what releases it.
 ///
 /// Clears `reserved_bytes` outright rather than trying to tell a live reservation from a dead one: a reservation only lives for the duration of one upload, so anything still held when this runs is almost certainly stale.
 /// Run it off-peak for that reason — a concurrent upload loses its hold, and its commit then re-adds the bytes anyway, but the window is briefly permissive.

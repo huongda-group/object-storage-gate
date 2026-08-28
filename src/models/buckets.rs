@@ -28,9 +28,8 @@ impl ActiveModelBehavior for super::_entities::buckets::ActiveModel {
 
 /// Names the gateway itself serves on, which therefore cannot be buckets.
 ///
-/// A bucket called `api` or `static` would be created happily and then be unreachable over S3,
-/// because those paths belong to the management API and the console. Refusing at creation is the
-/// only point where that is visible to the person making the mistake.
+/// A bucket called `api` or `static` would be created happily and then be unreachable over S3, because those paths belong to the management API and the console.
+/// Refusing at creation is the only point where that is visible to the person making the mistake.
 pub const RESERVED_BUCKET_NAMES: &[&str] = &["api", "static", "assets"];
 
 /// Longest bucket name the API accepts, matching the S3 bucket-name rules the console mirrors.
@@ -99,7 +98,8 @@ impl Model {
             .ok_or(ModelError::EntityNotFound)
     }
 
-    /// Create a bucket for a user, bound to the pool it proxies to. `max_bytes == 0` means unlimited.
+    /// Create a bucket for a user, bound to the pool it proxies to.
+    /// `max_bytes == 0` means unlimited.
     ///
     /// The pool lookup is not redundant with the foreign key: `SQLite` has no foreign key on `pool_id` (it cannot add one after the fact), so this check is what makes the three backends behave alike.
     ///
@@ -174,7 +174,10 @@ impl Model {
         self.max_bytes == 0
     }
 
-    /// Objects are reachable over a public URL without a signed request.
+    /// Whether the owner has asked for objects to be reachable over a public URL without a signed request.
+    ///
+    /// The flag is stored and shown in the console but nothing serves it yet: every data plane verb goes through `S3Request::resolve`, which authenticates unconditionally.
+    /// Public read needs a route that bypasses `SigV4` and a decision about CDN in front of it, and neither exists.
     #[must_use]
     pub const fn is_public(&self) -> bool {
         self.public_enabled
